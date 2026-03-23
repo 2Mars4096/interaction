@@ -158,6 +158,30 @@ def test_gaze_live_cli_click_mode_plans_normalized_pointer_action(monkeypatch, t
     )
 
 
+def test_gaze_live_cli_cursor_mode_plans_continuous_move_action(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeLiveProvider)
+    store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
+    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        exit_code = main(["gaze-live", "--runtime-dir", str(tmp_path / ".interaction"), "--frames", "8", "--action", "cursor"])
+    payload = json.loads(stdout.getvalue())
+
+    assert exit_code == 0
+    assert payload["live_gaze"]["status"] == "success"
+    assert payload["gaze_mode"] == "cursor"
+    assert payload["gaze_action"] == "focus_target"
+    assert payload["live_gaze"]["moved_events"] >= 1
+    assert any(
+        event["result"]
+        and event["result"]["details"]["commands"][0][2] == "interaction.platform.macos_runtime"
+        and event["result"]["details"]["commands"][0][3] == "move-normalized"
+        for event in payload["events"]
+    )
+    assert any(event["message"] == "Live gaze cursor hold is within the movement threshold." for event in payload["events"])
+
+
 def test_gaze_live_cli_reports_camera_error(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeErrorProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))

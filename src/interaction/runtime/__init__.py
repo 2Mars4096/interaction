@@ -10,6 +10,7 @@ from .webcam import (
     collect_webcam_calibration,
     default_webcam_calibration_targets,
     default_webcam_targets,
+    run_live_cursor_follow,
     run_live_webcam_trace,
 )
 from .voice import VoiceCommandLoop
@@ -26,5 +27,6 @@ __all__ = [
     "collect_webcam_calibration",
     "default_webcam_calibration_targets",
     "default_webcam_targets",
+    "run_live_cursor_follow",
     "run_live_webcam_trace",
 ]

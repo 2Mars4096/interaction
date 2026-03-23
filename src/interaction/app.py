@@ -30,6 +30,7 @@ from interaction.runtime import (
     collect_webcam_calibration,
     default_webcam_calibration_targets,
     default_webcam_targets,
+    run_live_cursor_follow,
     run_live_webcam_trace,
 )
 from interaction.session import SessionLogger, SessionReplay, serialize_feedback_event
@@ -96,7 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_calibrate.add_argument("--session-name", default="gaze-calibrate")
 
     gaze = subparsers.add_parser("gaze-smoke")
-    gaze.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag"], default="highlight")
+    gaze.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag", "cursor"], default="highlight")
     gaze.add_argument("--runtime-dir", default=".interaction")
     gaze.add_argument("--session-name", default="gaze-smoke")
     gaze.add_argument("--execute", action="store_true")
@@ -105,7 +106,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_live.add_argument("--camera-index", type=int, default=None)
     gaze_live.add_argument("--frames", type=int, default=18)
     gaze_live.add_argument("--delta-ms", type=int, default=100)
-    gaze_live.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag"], default="highlight")
+    gaze_live.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag", "cursor"], default="highlight")
     gaze_live.add_argument("--runtime-dir", default=".interaction")
     gaze_live.add_argument("--session-name", default="gaze-live")
     gaze_live.add_argument("--execute", action="store_true")
@@ -295,7 +296,8 @@ def _run_gaze_calibrate(args: argparse.Namespace, store: JsonStateStore) -> dict
 def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
     settings = store.load_settings()
     effective_dry_run = _effective_dry_run(settings, args)
-    gaze_action = _gaze_action_name(args.action)
+    gaze_mode = args.action
+    gaze_action = _gaze_action_name(gaze_mode)
     loop = GazeTrackingLoop(
         adapter=MacOSPlatformAdapter(dry_run=effective_dry_run),
         dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action),
@@ -351,6 +353,7 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         extra={
             "settings": _settings_payload(settings, effective_dry_run),
             "gaze_action": gaze_action.value,
+            "gaze_mode": gaze_mode,
             "calibration_profile": {
                 "x_scale": loop.calibration_profile.x_scale,
                 "y_scale": loop.calibration_profile.y_scale,
@@ -364,7 +367,8 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
 def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
     settings = store.load_settings()
     effective_dry_run = _effective_dry_run(settings, args)
-    gaze_action = _gaze_action_name(args.action)
+    gaze_mode = args.action
+    gaze_action = _gaze_action_name(gaze_mode)
     camera_index = settings.camera_index if args.camera_index is None else args.camera_index
     profile = store.load_calibration_profile("webcam-live")
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
@@ -387,6 +391,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
             extra={
                 "settings": _settings_payload(settings, effective_dry_run),
                 "gaze_action": gaze_action.value,
+                "gaze_mode": gaze_mode,
                 "camera_index": camera_index,
                 "live_gaze": {
                     "status": "error",
@@ -406,14 +411,25 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
     loop.calibration_profile = profile
     try:
         provider.open()
-        events, summary = run_live_webcam_trace(
-            provider,
-            loop,
-            frames=args.frames,
-            delta_ms=args.delta_ms,
-            targets=default_webcam_targets(),
-            environment=EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera"),
-        )
+        if gaze_mode == "cursor":
+            events, summary = run_live_cursor_follow(
+                provider,
+                profile,
+                adapter=loop.adapter,
+                frames=args.frames,
+                delta_ms=args.delta_ms,
+                environment=EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera"),
+                targets=default_webcam_targets(),
+            )
+        else:
+            events, summary = run_live_webcam_trace(
+                provider,
+                loop,
+                frames=args.frames,
+                delta_ms=args.delta_ms,
+                targets=default_webcam_targets(),
+                environment=EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera"),
+            )
         live_gaze = {"status": "success", **summary}
     except WebcamProviderError as error:
         events = [
@@ -437,6 +453,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
         extra={
             "settings": _settings_payload(settings, effective_dry_run),
             "gaze_action": gaze_action.value,
+            "gaze_mode": gaze_mode,
             "camera_index": camera_index,
             "live_gaze": live_gaze,
             "calibration_profile": {
@@ -852,6 +869,7 @@ def _gaze_action_name(value: str) -> ActionName:
         "right-click": ActionName.RIGHT_CLICK_TARGET,
         "double-click": ActionName.DOUBLE_CLICK_TARGET,
         "drag": ActionName.DRAG_TARGET,
+        "cursor": ActionName.FOCUS_TARGET,
     }
     return mapping[value]
 

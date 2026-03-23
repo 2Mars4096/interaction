@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
 
-from interaction.contracts import EnvironmentSnapshot, GazeObservation, GroundedTarget
+from interaction.contracts import ActionName, ActionProposal, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
+from interaction.control import CommandBroker
 from interaction.feedback import GazeFeedbackEvent, GazeLoopPhase
+from interaction.platform import PlatformAdapter
 from interaction.vision import (
     CalibrationProfile,
     CalibrationSample,
@@ -168,6 +170,119 @@ def run_live_webcam_trace(
         "successful_readings": successful_readings,
         "missing_readings": missing_readings,
         "triggered_events": triggered_events,
+    }
+
+
+def run_live_cursor_follow(
+    provider: OpenCVWebcamGazeProvider,
+    profile: CalibrationProfile,
+    *,
+    adapter: PlatformAdapter,
+    frames: int,
+    delta_ms: int,
+    environment: EnvironmentSnapshot | None = None,
+    min_confidence: float = 0.6,
+    min_move_distance: float = 0.02,
+    inferencer: GazeTargetInferencer | None = None,
+    smoother: GazeSmoother | None = None,
+    targets: list[NormalizedScreenTarget] | None = None,
+) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
+    if environment is None:
+        environment = EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera")
+    if targets is None:
+        targets = default_webcam_targets()
+    inferencer = inferencer or GazeTargetInferencer()
+    smoother = smoother or GazeSmoother()
+    broker = CommandBroker()
+
+    events: list[GazeFeedbackEvent] = []
+    successful_readings = 0
+    missing_readings = 0
+    moved_events = 0
+    low_confidence_readings = 0
+    last_dispatched_point: tuple[float, float] | None = None
+
+    for _ in range(frames):
+        reading = provider.read(delta_ms=delta_ms)
+        if reading is None:
+            missing_readings += 1
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
+            continue
+
+        successful_readings += 1
+        calibrated_point = profile.apply(reading.sample.point)
+        observation = smoother.smooth(
+            GazeSample(
+                point=calibrated_point,
+                confidence=reading.sample.confidence,
+                delta_ms=reading.sample.delta_ms,
+            )
+        )
+        target = inferencer.infer(observation, targets)
+        if observation.confidence < min_confidence or observation.x_norm is None or observation.y_norm is None:
+            low_confidence_readings += 1
+            events.append(
+                GazeFeedbackEvent(
+                    phase=GazeLoopPhase.RECOVERING,
+                    message="Live gaze confidence is too low for cursor follow.",
+                    observation=observation,
+                    target=target,
+                )
+            )
+            continue
+
+        point = (observation.x_norm, observation.y_norm)
+        if last_dispatched_point is not None:
+            distance = ((point[0] - last_dispatched_point[0]) ** 2 + (point[1] - last_dispatched_point[1]) ** 2) ** 0.5
+            if distance < min_move_distance:
+                events.append(
+                    GazeFeedbackEvent(
+                        phase=GazeLoopPhase.TRACKING,
+                        message="Live gaze cursor hold is within the movement threshold.",
+                        observation=observation,
+                        target=target,
+                    )
+                )
+                continue
+
+        proposal = ActionProposal(
+            action=ActionName.FOCUS_TARGET,
+            arguments={
+                "normalized_point": {"x": point[0], "y": point[1]},
+                **({"target_ref": target.target_id, "target_label": target.label} if target is not None else {}),
+                **({"target_bounds": target.bounds.model_dump(mode="json")} if target is not None and target.bounds is not None else {}),
+            },
+            confidence=observation.confidence,
+            risk=RiskLevel.L1,
+            requires_confirmation=False,
+            rationale="Live gaze cursor-follow mode moved the pointer to the current normalized gaze point.",
+        )
+        decision = broker.decide(proposal)
+        request = broker.build_execution_request(decision, environment)
+        result = adapter.execute(request)
+        moved_events += 1
+        last_dispatched_point = point
+        message = 'Moved cursor with live gaze follow.'
+        if target is not None:
+            message = f'Moved cursor with live gaze follow toward "{target.label}".'
+        events.append(
+            GazeFeedbackEvent(
+                phase=GazeLoopPhase.TRACKING,
+                message=message,
+                observation=observation,
+                target=target,
+                proposal=proposal,
+                result=result,
+            )
+        )
+
+    events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
+    return events, {
+        "attempted_frames": frames,
+        "successful_readings": successful_readings,
+        "missing_readings": missing_readings,
+        "moved_events": moved_events,
+        "low_confidence_readings": low_confidence_readings,
     }
 
 
