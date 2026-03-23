@@ -16,6 +16,10 @@ def _load_quartz() -> ctypes.CDLL:
     if not library:
         raise RuntimeError("ApplicationServices framework not found")
     quartz = ctypes.cdll.LoadLibrary(library)
+    quartz.CGEventCreate.restype = ctypes.c_void_p
+    quartz.CGEventCreate.argtypes = [ctypes.c_void_p]
+    quartz.CGEventGetLocation.restype = CGPoint
+    quartz.CGEventGetLocation.argtypes = [ctypes.c_void_p]
     quartz.CGEventCreateMouseEvent.restype = ctypes.c_void_p
     quartz.CGEventCreateMouseEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint32, CGPoint, ctypes.c_uint32]
     quartz.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
@@ -42,6 +46,29 @@ def move(x: float, y: float) -> None:
     quartz = _load_quartz()
     point = CGPoint(x, y)
     _post_mouse_event(quartz, 5, point, 0)
+
+
+def current_position(quartz: ctypes.CDLL | None = None) -> CGPoint:
+    quartz = quartz or _load_quartz()
+    event = quartz.CGEventCreate(None)
+    if not event:
+        raise RuntimeError("Failed to create Quartz event for cursor lookup")
+    try:
+        return quartz.CGEventGetLocation(event)
+    finally:
+        quartz.CFRelease(event)
+
+
+def current_position_normalized() -> tuple[float, float]:
+    quartz = _load_quartz()
+    point = current_position(quartz)
+    display_id = quartz.CGMainDisplayID()
+    width = max(1, int(quartz.CGDisplayPixelsWide(display_id)))
+    height = max(1, int(quartz.CGDisplayPixelsHigh(display_id)))
+    return (
+        _clamp(point.x / max(1, width - 1)),
+        _clamp(point.y / max(1, height - 1)),
+    )
 
 
 def click(x: float, y: float) -> None:

@@ -107,6 +107,16 @@ interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5
 interaction replay --session-log .interaction/logs/fusion-smoke.jsonl
 ```
 
+`interaction gaze-calibrate` now uses four well-spread points on the primary display in randomized order. Look at each dot and press Enter or Space while the calibration overlay is active to capture that fixation before the next point appears.
+
+For the newer landmark-based webcam tracker, install the optional vision dependency and select the backend explicitly:
+
+```bash
+pip install -e ".[dev,vision]"
+interaction gaze-calibrate --tracker mediapipe --tracker-model-path /absolute/path/to/face_landmarker.task --settle-ms 800 --frames-per-step 6
+interaction gaze-live --tracker mediapipe --tracker-model-path /absolute/path/to/face_landmarker.task --frames 24 --action cursor --show-camera --show-dot
+```
+
 To execute approved live actions instead of only printing dry-run plans, add `--execute` to the relevant command:
 
 ```bash
@@ -132,6 +142,8 @@ interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 -
 ```
 
 During `gaze-live`, use `--action cursor` for continuous cursor follow, then `click`, `right-click`, `double-click`, or `drag` to test gaze-only manipulation on large targets. Add `--show-dot` to render a small live gaze marker on screen during the run. In `drag` mode, dwell once on the source and dwell again on the destination. During `fusion-live`, look at a large on-screen target and say commands such as `focus this`, `click this`, `right click this`, or `open this`. Confirm pointer actions when prompted.
+
+Add `--show-camera` during live gaze runs to open a small webcam debug window with the detected face box, eye boxes, iris centers, and the current gaze estimate. This is useful for checking whether the visual tracker is stable before trying pointer control.
 
 If `cursor` mode feels too twitchy or too sluggish, tune it per run:
 

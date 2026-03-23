@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from interaction.audio import ScriptedTranscriber
 from interaction.contracts import BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget

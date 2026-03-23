@@ -30,6 +30,19 @@ def test_calibration_profile_adjusts_offsets() -> None:
     assert adjusted.y == 0.5
 
 
+def test_calibration_profile_supports_axis_inversion() -> None:
+    profile = CalibrationProfile.fit(
+        [
+            CalibrationSample(raw=NormalizedPoint(0.2, 0.2), expected=NormalizedPoint(0.8, 0.2)),
+            CalibrationSample(raw=NormalizedPoint(0.8, 0.8), expected=NormalizedPoint(0.2, 0.8)),
+        ]
+    )
+
+    adjusted = profile.apply(NormalizedPoint(0.2, 0.5))
+
+    assert adjusted.x == pytest.approx(0.8)
+
+
 def test_gaze_smoother_averages_points() -> None:
     smoother = GazeSmoother(window_size=2)
     smoother.smooth(GazeSample(point=NormalizedPoint(0.2, 0.2)))

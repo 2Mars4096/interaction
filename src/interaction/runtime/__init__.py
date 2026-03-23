@@ -8,8 +8,11 @@ from .webcam import (
     WebcamCalibrationError,
     capture_live_gaze_context,
     collect_webcam_calibration,
+    collect_webcam_validation,
     default_webcam_calibration_targets,
     default_webcam_targets,
+    generate_single_screen_calibration_targets,
+    generate_single_screen_validation_targets,
     run_live_cursor_follow,
     run_live_webcam_trace,
 )
@@ -25,8 +28,11 @@ __all__ = [
     "WebcamCalibrationError",
     "capture_live_gaze_context",
     "collect_webcam_calibration",
+    "collect_webcam_validation",
     "default_webcam_calibration_targets",
     "default_webcam_targets",
+    "generate_single_screen_calibration_targets",
+    "generate_single_screen_validation_targets",
     "run_live_cursor_follow",
     "run_live_webcam_trace",
 ]

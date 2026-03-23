@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from collections.abc import Callable
 import math
+import random
 from typing import Any
 
 from interaction.contracts import ActionName, ActionProposal, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
@@ -20,7 +21,7 @@ from interaction.vision import (
     GazeTargetInferencer,
     NormalizedPoint,
     NormalizedScreenTarget,
-    OpenCVWebcamGazeProvider,
+    WebcamProvider,
 )
 
 from .gaze import GazeTrackingLoop
@@ -55,10 +56,10 @@ class LiveGazeContext:
 
 @dataclass
 class CursorFollowController:
-    smoothing: float = 0.28
-    deadzone: float = 0.015
-    edge_padding: float = 0.03
-    max_step: float = 0.16
+    smoothing: float = 0.1
+    deadzone: float = 0.05
+    edge_padding: float = 0.05
+    max_step: float = 0.04
     dispatched_point: tuple[float, float] | None = None
 
     def next_point(self, observation: GazeObservation) -> tuple[float, float] | None:
@@ -78,7 +79,7 @@ class CursorFollowController:
         if distance < self.deadzone:
             return None
 
-        dynamic_smoothing = min(0.72, self.smoothing + distance * 0.6)
+        dynamic_smoothing = min(0.24, self.smoothing + distance * 0.18)
         step_x = dx * dynamic_smoothing
         step_y = dy * dynamic_smoothing
         step_distance = math.hypot(step_x, step_y)
@@ -103,6 +104,65 @@ def default_webcam_calibration_targets() -> tuple[WebcamCalibrationTarget, ...]:
         WebcamCalibrationTarget(label="lower left", expected=NormalizedPoint(0.2, 0.8)),
         WebcamCalibrationTarget(label="lower right", expected=NormalizedPoint(0.8, 0.8)),
     )
+
+
+def generate_single_screen_calibration_targets(*, seed: int | None = None) -> tuple[WebcamCalibrationTarget, ...]:
+    """Generate four well-spread primary-screen anchors in randomized order."""
+
+    rng = random.Random(seed)
+    anchors = [
+        ("upper left", 0.18, 0.18),
+        ("upper right", 0.82, 0.18),
+        ("lower left", 0.18, 0.82),
+        ("lower right", 0.82, 0.82),
+    ]
+    targets = [
+        WebcamCalibrationTarget(
+            label=label,
+            expected=NormalizedPoint(
+                x=_clamp_normalized(base_x + rng.uniform(-0.045, 0.045)),
+                y=_clamp_normalized(base_y + rng.uniform(-0.045, 0.045)),
+            ),
+        )
+        for label, base_x, base_y in anchors
+    ]
+    rng.shuffle(targets)
+    return tuple(targets)
+
+
+def generate_single_screen_validation_targets(
+    *,
+    count: int = 6,
+    seed: int | None = None,
+) -> tuple[WebcamCalibrationTarget, ...]:
+    """Generate well-spread randomized validation points across one display."""
+
+    rng = random.Random(seed)
+    candidates = [
+        ("upper left", 0.22, 0.22),
+        ("upper center", 0.5, 0.18),
+        ("upper right", 0.78, 0.22),
+        ("middle left", 0.22, 0.5),
+        ("middle center", 0.5, 0.5),
+        ("middle right", 0.78, 0.5),
+        ("lower left", 0.22, 0.78),
+        ("lower center", 0.5, 0.82),
+        ("lower right", 0.78, 0.78),
+    ]
+    desired_count = max(1, min(len(candidates), int(count)))
+    chosen = rng.sample(candidates, k=desired_count)
+    targets = [
+        WebcamCalibrationTarget(
+            label=f"validation {index + 1} ({label})",
+            expected=NormalizedPoint(
+                x=_clamp_normalized(base_x + rng.uniform(-0.03, 0.03)),
+                y=_clamp_normalized(base_y + rng.uniform(-0.03, 0.03)),
+            ),
+        )
+        for index, (label, base_x, base_y) in enumerate(chosen)
+    ]
+    rng.shuffle(targets)
+    return tuple(targets)
 
 
 def default_webcam_targets() -> list[NormalizedScreenTarget]:
@@ -130,18 +190,21 @@ def default_webcam_targets() -> list[NormalizedScreenTarget]:
 
 
 def collect_webcam_calibration(
-    provider: OpenCVWebcamGazeProvider,
+    provider: WebcamProvider,
     *,
+    targets: tuple[WebcamCalibrationTarget, ...] | None = None,
     frames_per_step: int = 6,
     delta_ms: int = 100,
     max_attempts_multiplier: int = 4,
-    before_step: Callable[[WebcamCalibrationTarget], None] | None = None,
-) -> tuple[CalibrationProfile, list[dict[str, Any]]]:
+    before_step: Callable[[WebcamCalibrationTarget, int, int], None] | None = None,
+) -> tuple[CalibrationProfile, list[dict[str, Any]], dict[str, float | int]]:
     samples: list[CalibrationSample] = []
     step_results: list[dict[str, Any]] = []
-    for step in default_webcam_calibration_targets():
+    calibration_targets = targets or default_webcam_calibration_targets()
+    total_steps = len(calibration_targets)
+    for step_index, step in enumerate(calibration_targets, start=1):
         if before_step is not None:
-            before_step(step)
+            before_step(step, step_index, total_steps)
         aggregate = provider.capture_average_sample(
             required_frames=frames_per_step,
             max_attempts=max(frames_per_step, 1) * max_attempts_multiplier,
@@ -177,11 +240,91 @@ def collect_webcam_calibration(
             "Unable to collect enough stable webcam calibration samples.",
             payload={"steps": step_results, "successful_steps": len(samples)},
         )
-    return CalibrationProfile.fit(samples), step_results
+    quality = _calibration_signal_quality(samples)
+    if quality["raw_x_span"] < 0.08 or quality["raw_y_span"] < 0.05:
+        raise WebcamCalibrationError(
+            "unstable_calibration_signal",
+            (
+                "The live gaze signal did not move enough during calibration. "
+                f'Observed raw span was x={quality["raw_x_span"]:.3f}, y={quality["raw_y_span"]:.3f}. '
+                "Retry and exaggerate the eye movement between dots while keeping your head steadier."
+            ),
+            payload={
+                "steps": step_results,
+                "successful_steps": len(samples),
+                "quality": quality,
+            },
+        )
+    return CalibrationProfile.fit(samples), step_results, quality
+
+
+def collect_webcam_validation(
+    provider: WebcamProvider,
+    profile: CalibrationProfile,
+    *,
+    targets: tuple[WebcamCalibrationTarget, ...] | None = None,
+    frames_per_step: int = 4,
+    delta_ms: int = 100,
+    max_attempts_multiplier: int = 4,
+    before_step: Callable[[WebcamCalibrationTarget, int, int], None] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, float | int]]:
+    validation_targets = targets or generate_single_screen_validation_targets()
+    total_steps = len(validation_targets)
+    step_results: list[dict[str, Any]] = []
+
+    for step_index, step in enumerate(validation_targets, start=1):
+        if before_step is not None:
+            before_step(step, step_index, total_steps)
+        aggregate = provider.capture_average_sample(
+            required_frames=frames_per_step,
+            max_attempts=max(frames_per_step, 1) * max_attempts_multiplier,
+            delta_ms=delta_ms,
+        )
+        if aggregate is None:
+            step_results.append(
+                {
+                    "label": step.label,
+                    "expected": {"x": step.expected.x, "y": step.expected.y},
+                    "success": False,
+                    "used_frames": 0,
+                    "attempted_frames": max(frames_per_step, 1) * max_attempts_multiplier,
+                }
+            )
+            continue
+
+        raw_point = aggregate.sample.point
+        tracked_point = profile.apply(raw_point)
+        error_x = tracked_point.x - step.expected.x
+        error_y = tracked_point.y - step.expected.y
+        error_distance = math.hypot(error_x, error_y)
+        step_results.append(
+            {
+                "label": step.label,
+                "expected": {"x": step.expected.x, "y": step.expected.y},
+                "raw": {"x": raw_point.x, "y": raw_point.y},
+                "tracked": {"x": tracked_point.x, "y": tracked_point.y},
+                "error": {"dx": error_x, "dy": error_y, "distance": error_distance},
+                "success": True,
+                "confidence": aggregate.sample.confidence,
+                "used_frames": aggregate.used_frames,
+                "attempted_frames": aggregate.attempted_frames,
+            }
+        )
+
+    successful_results = [result for result in step_results if result["success"]]
+    distances = [float(result["error"]["distance"]) for result in successful_results]
+    summary: dict[str, float | int] = {
+        "attempted_points": total_steps,
+        "successful_points": len(successful_results),
+        "missing_points": total_steps - len(successful_results),
+        "mean_error_distance": (sum(distances) / len(distances)) if distances else 0.0,
+        "max_error_distance": max(distances) if distances else 0.0,
+    }
+    return step_results, summary
 
 
 def run_live_webcam_trace(
-    provider: OpenCVWebcamGazeProvider,
+    provider: WebcamProvider,
     loop: GazeTrackingLoop,
     *,
     frames: int,
@@ -189,6 +332,7 @@ def run_live_webcam_trace(
     targets: list[NormalizedScreenTarget] | None = None,
     environment: EnvironmentSnapshot | None = None,
     point_visualizer: Any | None = None,
+    camera_preview: Any | None = None,
 ) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
     if targets is None:
         targets = default_webcam_targets()
@@ -206,9 +350,11 @@ def run_live_webcam_trace(
             events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
             continue
         successful_readings += 1
+        calibrated_point = loop.calibration_profile.apply(reading.sample.point)
         if point_visualizer is not None:
-            calibrated_point = loop.calibration_profile.apply(reading.sample.point)
             _show_point_visualizer(point_visualizer, calibrated_point.x, calibrated_point.y)
+        if camera_preview is not None:
+            _show_camera_preview(camera_preview, reading, calibrated_point=(calibrated_point.x, calibrated_point.y))
         sample_events = loop.process_sample(reading.sample, targets, environment)
         triggered_events += sum(1 for event in sample_events if event.phase == GazeLoopPhase.TRIGGERED)
         events.extend(sample_events)
@@ -222,7 +368,7 @@ def run_live_webcam_trace(
 
 
 def run_live_cursor_follow(
-    provider: OpenCVWebcamGazeProvider,
+    provider: WebcamProvider,
     profile: CalibrationProfile,
     *,
     adapter: PlatformAdapter,
@@ -230,14 +376,18 @@ def run_live_cursor_follow(
     delta_ms: int,
     environment: EnvironmentSnapshot | None = None,
     min_confidence: float = 0.6,
-    min_move_distance: float = 0.015,
-    smoothing: float = 0.28,
-    edge_padding: float = 0.03,
-    max_step: float = 0.16,
+    min_move_distance: float = 0.05,
+    smoothing: float = 0.1,
+    edge_padding: float = 0.05,
+    max_step: float = 0.04,
+    response_gain_x: float = 0.25,
+    response_gain_y: float = 0.5,
     inferencer: GazeTargetInferencer | None = None,
     smoother: GazeSmoother | None = None,
     targets: list[NormalizedScreenTarget] | None = None,
     point_visualizer: Any | None = None,
+    initial_cursor_point: tuple[float, float] | None = None,
+    camera_preview: Any | None = None,
 ) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
     if environment is None:
         environment = EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera")
@@ -252,6 +402,12 @@ def run_live_cursor_follow(
         edge_padding=edge_padding,
         max_step=max_step,
     )
+    anchor_point = (
+        _clamp_with_padding(initial_cursor_point[0], edge_padding),
+        _clamp_with_padding(initial_cursor_point[1], edge_padding),
+    ) if initial_cursor_point is not None else (0.5, 0.5)
+    if initial_cursor_point is not None:
+        cursor.dispatched_point = anchor_point
 
     events: list[GazeFeedbackEvent] = []
     successful_readings = 0
@@ -259,6 +415,9 @@ def run_live_cursor_follow(
     moved_events = 0
     low_confidence_readings = 0
     held_events = 0
+
+    if point_visualizer is not None and cursor.dispatched_point is not None:
+        _show_point_visualizer(point_visualizer, cursor.dispatched_point[0], cursor.dispatched_point[1])
 
     for _ in range(frames):
         reading = provider.read(delta_ms=delta_ms)
@@ -269,7 +428,13 @@ def run_live_cursor_follow(
             continue
 
         successful_readings += 1
-        calibrated_point = profile.apply(reading.sample.point)
+        calibrated_point = _compress_point_around_anchor(
+            profile.apply(reading.sample.point),
+            anchor_point=anchor_point,
+            gain_x=response_gain_x,
+            gain_y=response_gain_y,
+            edge_padding=edge_padding,
+        )
         observation = smoother.smooth(
             GazeSample(
                 point=calibrated_point,
@@ -277,8 +442,6 @@ def run_live_cursor_follow(
                 delta_ms=reading.sample.delta_ms,
             )
         )
-        if point_visualizer is not None and observation.x_norm is not None and observation.y_norm is not None:
-            _show_point_visualizer(point_visualizer, observation.x_norm, observation.y_norm)
         target = inferencer.infer(observation, targets)
         if observation.confidence < min_confidence or observation.x_norm is None or observation.y_norm is None:
             low_confidence_readings += 1
@@ -293,6 +456,17 @@ def run_live_cursor_follow(
             continue
 
         point = cursor.next_point(observation)
+        visual_point = point if point is not None else cursor.dispatched_point
+        if point_visualizer is not None and visual_point is not None:
+            _show_point_visualizer(point_visualizer, visual_point[0], visual_point[1])
+        if camera_preview is not None:
+            _show_camera_preview(
+                camera_preview,
+                reading,
+                calibrated_point=(observation.x_norm, observation.y_norm) if observation.x_norm is not None and observation.y_norm is not None else None,
+                cursor_point=visual_point,
+                target_label=target.label if target is not None else None,
+            )
         if point is None:
             held_events += 1
             events.append(
@@ -347,7 +521,7 @@ def run_live_cursor_follow(
 
 
 def capture_live_gaze_context(
-    provider: OpenCVWebcamGazeProvider,
+    provider: WebcamProvider,
     profile: CalibrationProfile,
     *,
     frames: int,
@@ -446,6 +620,40 @@ def _clamp_with_padding(value: float, padding: float) -> float:
     return max(padding, min(1.0 - padding, value))
 
 
+def _clamp_normalized(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _calibration_signal_quality(samples: list[CalibrationSample]) -> dict[str, float | int]:
+    raw_xs = [sample.raw.x for sample in samples]
+    raw_ys = [sample.raw.y for sample in samples]
+    return {
+        "sample_count": len(samples),
+        "raw_x_span": max(raw_xs) - min(raw_xs),
+        "raw_y_span": max(raw_ys) - min(raw_ys),
+        "raw_x_mean": sum(raw_xs) / len(raw_xs),
+        "raw_y_mean": sum(raw_ys) / len(raw_ys),
+    }
+
+
+def _compress_point_around_anchor(
+    point: NormalizedPoint,
+    *,
+    anchor_point: tuple[float, float],
+    gain_x: float,
+    gain_y: float,
+    edge_padding: float,
+) -> NormalizedPoint:
+    gain_x = max(0.05, min(1.0, float(gain_x)))
+    gain_y = max(0.05, min(1.0, float(gain_y)))
+    anchor_x = _clamp_with_padding(anchor_point[0], edge_padding)
+    anchor_y = _clamp_with_padding(anchor_point[1], edge_padding)
+    return NormalizedPoint(
+        x=_clamp_with_padding(anchor_x + (point.x - anchor_x) * gain_x, edge_padding),
+        y=_clamp_with_padding(anchor_y + (point.y - anchor_y) * gain_y, edge_padding),
+    )
+
+
 def _show_point_visualizer(point_visualizer: Any | None, x_norm: float, y_norm: float) -> None:
     if point_visualizer is None:
         return
@@ -460,5 +668,26 @@ def _hide_point_visualizer(point_visualizer: Any | None) -> None:
         return
     try:
         point_visualizer.hide()
+    except Exception:
+        return
+
+
+def _show_camera_preview(
+    camera_preview: Any | None,
+    reading: Any,
+    *,
+    calibrated_point: tuple[float, float] | None = None,
+    cursor_point: tuple[float, float] | None = None,
+    target_label: str | None = None,
+) -> None:
+    if camera_preview is None:
+        return
+    try:
+        camera_preview.show_reading(
+            reading,
+            calibrated_point=calibrated_point,
+            cursor_point=cursor_point,
+            target_label=target_label,
+        )
     except Exception:
         return

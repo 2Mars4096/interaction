@@ -45,13 +45,26 @@ class CalibrationProfile:
             y=_clamp(point.y * self.y_scale + self.y_offset),
         )
 
+    def compose(self, correction: "CalibrationProfile") -> "CalibrationProfile":
+        return CalibrationProfile(
+            x_scale=self.x_scale * correction.x_scale,
+            y_scale=self.y_scale * correction.y_scale,
+            x_offset=self.x_offset * correction.x_scale + correction.x_offset,
+            y_offset=self.y_offset * correction.y_scale + correction.y_offset,
+        )
+
 
 def _fit_scale(raw_values: list[float], expected_values: list[float]) -> float:
-    raw_span = max(raw_values) - min(raw_values)
-    expected_span = max(expected_values) - min(expected_values)
-    if raw_span <= 1e-6:
+    count = len(raw_values)
+    if count == 0:
         return 1.0
-    return expected_span / raw_span
+    raw_mean = sum(raw_values) / count
+    expected_mean = sum(expected_values) / count
+    variance = sum((raw - raw_mean) ** 2 for raw in raw_values)
+    if variance <= 1e-9:
+        return 1.0
+    covariance = sum((raw - raw_mean) * (expected - expected_mean) for raw, expected in zip(raw_values, expected_values))
+    return covariance / variance
 
 
 def _clamp(value: float) -> float:

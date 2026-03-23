@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import cv2
 import numpy as np
@@ -31,6 +31,8 @@ class WebcamGazeReading:
     frame_size: tuple[int, int]
     face_bbox: tuple[int, int, int, int]
     eye_boxes: tuple[tuple[int, int, int, int], ...]
+    frame: np.ndarray | None = None
+    pupil_points: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,24 @@ class WebcamSampleAggregate:
     sample: GazeSample
     used_frames: int
     attempted_frames: int
+
+
+class WebcamProvider(Protocol):
+    camera_index: int
+
+    def open(self) -> None: ...
+
+    def close(self) -> None: ...
+
+    def read(self, *, delta_ms: int = 100) -> WebcamGazeReading | None: ...
+
+    def capture_average_sample(
+        self,
+        *,
+        required_frames: int = 6,
+        max_attempts: int | None = None,
+        delta_ms: int = 100,
+    ) -> WebcamSampleAggregate | None: ...
 
 
 class OpenCVWebcamGazeProvider:
@@ -124,6 +144,8 @@ class OpenCVWebcamGazeProvider:
             frame_size=(width, height),
             face_bbox=(int(fx), int(fy), int(fw), int(fh)),
             eye_boxes=tuple((int(ex), int(ey), int(ew), int(eh)) for ex, ey, ew, eh in eye_boxes),
+            frame=frame.copy(),
+            pupil_points=tuple((int(round(px)), int(round(py))) for px, py in pupil_points),
         )
 
     def capture_average_sample(
