@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from interaction.contracts import EnvironmentSnapshot
+from interaction.contracts import ActionName, BrokerDecisionType, EnvironmentSnapshot
 from interaction.control import CommandBroker
 from interaction.feedback import GazeFeedbackEvent, GazeLoopPhase
 from interaction.platform import MacOSPlatformAdapter, PlatformAdapter
@@ -20,12 +20,14 @@ class GazeTrackingLoop:
         inferencer: GazeTargetInferencer | None = None,
         smoother: GazeSmoother | None = None,
         dwell_trigger: DwellTrigger | None = None,
+        auto_confirm_actions: set[ActionName] | None = None,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
         self.inferencer = inferencer or GazeTargetInferencer()
         self.smoother = smoother or GazeSmoother()
         self.dwell_trigger = dwell_trigger or DwellTrigger()
+        self.auto_confirm_actions = auto_confirm_actions or set()
         self.calibration_profile = CalibrationProfile()
 
     def calibrate(self, samples: list[CalibrationSample]) -> list[GazeFeedbackEvent]:
@@ -89,12 +91,31 @@ class GazeTrackingLoop:
             return events
 
         decision = self.broker.decide(proposal)
+        auto_confirmed = False
+        if decision.decision == BrokerDecisionType.CONFIRM and proposal.action in self.auto_confirm_actions:
+            decision = self.broker.confirm(decision)
+            auto_confirmed = True
+        if decision.decision != BrokerDecisionType.ALLOW:
+            events.append(
+                GazeFeedbackEvent(
+                    phase=GazeLoopPhase.RECOVERING,
+                    message=decision.reason,
+                    observation=observation,
+                    target=target,
+                    proposal=proposal,
+                )
+            )
+            return events
         request = self.broker.build_execution_request(decision, environment)
         result = self.adapter.execute(request)
+        action_label = proposal.action.value.replace("_target", "").replace("_", " ")
+        message = f"Stable dwell triggered a {action_label} action."
+        if auto_confirmed:
+            message = f"Stable dwell triggered an explicit gaze-mode {action_label} action."
         events.append(
             GazeFeedbackEvent(
                 phase=GazeLoopPhase.TRIGGERED,
-                message="Stable dwell triggered a highlight action.",
+                message=message,
                 observation=observation,
                 target=target,
                 proposal=proposal,

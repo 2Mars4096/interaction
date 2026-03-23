@@ -4,8 +4,9 @@
 - [feat] Added normalized gaze-point execution planning so `fusion-live` can turn recent gaze context into real pointer `focus`, `click`, `double-click`, and `right-click` plans instead of placeholder notifications.
 - [feat] Added `right_click_target` plus deictic multimodal support for phrases like `right click this` and `move here`.
 - [feat] Added a one-shot `--execute` CLI override so live voice, gaze, and fusion commands can bypass the default dry-run setting for demos.
+- [feat] Added explicit `gaze-live --action ...` dwell modes for gaze-only `move`, `click`, `right-click`, and `double-click` testing.
 - [infra] Added `numpy` and `opencv-python` to the installable project dependencies and ignored runtime state under `.interaction/`.
-- [test] Added regression coverage for normalized pointer planning and right-click fusion flows.
+- [test] Added regression coverage for normalized pointer planning, right-click fusion flows, and gaze-only click-mode execution planning.
 
 ## 2026-03-22
 - [fix] Suppressed native OpenCV camera-backend stderr noise during webcam open failures so `gaze-live` and `fusion-live` now return clean structured JSON on denied camera access.

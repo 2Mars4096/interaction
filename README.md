@@ -25,6 +25,7 @@ The current implementation is still intentionally limited:
 - a push-to-talk voice loop now exists with transcript streaming, bounded voice parsing, confirmation/cancellation handling, and dry-run broker execution
 - a real macOS microphone-to-transcript path now exists through a native helper exposed as `interaction voice-live`
 - a real webcam calibration and live gaze path now exists through `interaction gaze-calibrate` and `interaction gaze-live`
+- `gaze-live` now supports explicit dwell-triggered `highlight`, `move`, `click`, `right-click`, and `double-click` modes for self-testing gaze-only manipulation
 - a real sequential live multimodal path now exists through `interaction fusion-live`, including gaze-grounded `focus this`, `click this`, `right click this`, and `open this`
 - a gaze loop now exists with calibration fitting, smoothing, large-target inference, conservative dwell-triggered highlighting, and dry-run broker execution
 - an OpenCV webcam provider path now exists for coarse large-target grounding
@@ -98,6 +99,7 @@ interaction fusion-smoke
 interaction gaze-smoke
 interaction gaze-calibrate --settle-ms 800 --frames-per-step 6
 interaction gaze-live --frames 18
+interaction gaze-live --frames 18 --action click --execute
 interaction voice-live --duration 4.0
 interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5
 interaction replay --session-log .interaction/logs/fusion-smoke.jsonl
@@ -106,6 +108,7 @@ interaction replay --session-log .interaction/logs/fusion-smoke.jsonl
 To execute approved live actions instead of only printing dry-run plans, add `--execute` to the relevant command:
 
 ```bash
+interaction gaze-live --frames 18 --action click --execute
 interaction voice-live --duration 4.0 --execute
 interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 --execute
 ```
@@ -117,10 +120,12 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 interaction gaze-calibrate --settle-ms 800 --frames-per-step 6
+interaction gaze-live --frames 18 --action move --execute
+interaction gaze-live --frames 18 --action click --execute
 interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 --execute
 ```
 
-During `fusion-live`, look at a large on-screen target and say commands such as `focus this`, `click this`, `right click this`, or `open this`. Confirm pointer actions when prompted.
+During `gaze-live`, use `--action move`, `click`, `right-click`, or `double-click` to test gaze-only dwell manipulation on large targets. During `fusion-live`, look at a large on-screen target and say commands such as `focus this`, `click this`, `right click this`, or `open this`. Confirm pointer actions when prompted.
 
 ## Working Product Shape
 

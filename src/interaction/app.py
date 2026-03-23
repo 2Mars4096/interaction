@@ -10,7 +10,7 @@ from typing import Any
 from types import SimpleNamespace
 
 from interaction.audio import MacOSLiveSpeechProvider, SpeechCaptureError
-from interaction.contracts import EnvironmentSnapshot, GazeObservation
+from interaction.contracts import ActionName, EnvironmentSnapshot, GazeObservation
 from interaction.feedback import (
     FusionFeedbackEvent,
     FusionLoopPhase,
@@ -96,6 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_calibrate.add_argument("--session-name", default="gaze-calibrate")
 
     gaze = subparsers.add_parser("gaze-smoke")
+    gaze.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click"], default="highlight")
     gaze.add_argument("--runtime-dir", default=".interaction")
     gaze.add_argument("--session-name", default="gaze-smoke")
     gaze.add_argument("--execute", action="store_true")
@@ -104,6 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_live.add_argument("--camera-index", type=int, default=None)
     gaze_live.add_argument("--frames", type=int, default=18)
     gaze_live.add_argument("--delta-ms", type=int, default=100)
+    gaze_live.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click"], default="highlight")
     gaze_live.add_argument("--runtime-dir", default=".interaction")
     gaze_live.add_argument("--session-name", default="gaze-live")
     gaze_live.add_argument("--execute", action="store_true")
@@ -293,9 +295,11 @@ def _run_gaze_calibrate(args: argparse.Namespace, store: JsonStateStore) -> dict
 def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
     settings = store.load_settings()
     effective_dry_run = _effective_dry_run(settings, args)
+    gaze_action = _gaze_action_name(args.action)
     loop = GazeTrackingLoop(
         adapter=MacOSPlatformAdapter(dry_run=effective_dry_run),
-        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms),
+        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action),
+        auto_confirm_actions=_gaze_auto_confirm_actions(gaze_action),
     )
     existing = store.load_calibration_profile("default")
     calibration_events: list[GazeFeedbackEvent] = []
@@ -333,6 +337,7 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         renderer=renderer,
         extra={
             "settings": _settings_payload(settings, effective_dry_run),
+            "gaze_action": gaze_action.value,
             "calibration_profile": {
                 "x_scale": loop.calibration_profile.x_scale,
                 "y_scale": loop.calibration_profile.y_scale,
@@ -346,6 +351,7 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
 def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
     settings = store.load_settings()
     effective_dry_run = _effective_dry_run(settings, args)
+    gaze_action = _gaze_action_name(args.action)
     camera_index = settings.camera_index if args.camera_index is None else args.camera_index
     profile = store.load_calibration_profile("webcam-live")
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
@@ -367,6 +373,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
             renderer=renderer,
             extra={
                 "settings": _settings_payload(settings, effective_dry_run),
+                "gaze_action": gaze_action.value,
                 "camera_index": camera_index,
                 "live_gaze": {
                     "status": "error",
@@ -380,7 +387,8 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
     provider = OpenCVWebcamGazeProvider(camera_index=camera_index)
     loop = GazeTrackingLoop(
         adapter=MacOSPlatformAdapter(dry_run=effective_dry_run),
-        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms),
+        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action),
+        auto_confirm_actions=_gaze_auto_confirm_actions(gaze_action),
     )
     loop.calibration_profile = profile
     try:
@@ -415,6 +423,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
         renderer=renderer,
         extra={
             "settings": _settings_payload(settings, effective_dry_run),
+            "gaze_action": gaze_action.value,
             "camera_index": camera_index,
             "live_gaze": live_gaze,
             "calibration_profile": {
@@ -820,6 +829,23 @@ def _settings_payload(settings, effective_dry_run: bool) -> dict[str, Any]:
     payload = dict(settings.__dict__)
     payload["effective_dry_run"] = effective_dry_run
     return payload
+
+
+def _gaze_action_name(value: str) -> ActionName:
+    mapping = {
+        "highlight": ActionName.HIGHLIGHT_TARGET,
+        "move": ActionName.FOCUS_TARGET,
+        "click": ActionName.CLICK_TARGET,
+        "right-click": ActionName.RIGHT_CLICK_TARGET,
+        "double-click": ActionName.DOUBLE_CLICK_TARGET,
+    }
+    return mapping[value]
+
+
+def _gaze_auto_confirm_actions(action: ActionName) -> set[ActionName]:
+    if action in {ActionName.CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET}:
+        return {action}
+    return set()
 
 
 def _profile_to_payload(profile) -> dict[str, float] | None:

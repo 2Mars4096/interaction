@@ -1,6 +1,6 @@
 import pytest
 
-from interaction.contracts import EnvironmentSnapshot
+from interaction.contracts import ActionName, EnvironmentSnapshot
 from interaction.feedback import GazeLoopPhase
 from interaction.platform import MacOSPlatformAdapter
 from interaction.runtime import GazeTrackingLoop
@@ -70,6 +70,23 @@ def test_dwell_trigger_fires_once_after_threshold() -> None:
     assert trigger.update(observation3, target) is None
 
 
+def test_dwell_trigger_click_mode_includes_normalized_point() -> None:
+    target = NormalizedScreenTarget(target_id="compose", label="Compose", role="button", x=0.5, y=0.2, width=0.2, height=0.1).to_grounded_target(0.9)
+    trigger = DwellTrigger(dwell_ms=500, min_confidence=0.6, action=ActionName.CLICK_TARGET)
+    smoother = GazeSmoother(window_size=1)
+
+    observation1 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=250))
+    observation2 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=250))
+
+    assert trigger.update(observation1, target) is None
+    proposal = trigger.update(observation2, target)
+
+    assert proposal is not None
+    assert proposal.action == ActionName.CLICK_TARGET
+    assert proposal.arguments["normalized_point"] == {"x": 0.55, "y": 0.22}
+    assert proposal.arguments["target_bounds"]["width"] == pytest.approx(0.2)
+
+
 def test_gaze_loop_triggers_highlight_dry_run() -> None:
     loop = GazeTrackingLoop(adapter=MacOSPlatformAdapter(dry_run=True))
     targets = [
@@ -85,3 +102,23 @@ def test_gaze_loop_triggers_highlight_dry_run() -> None:
 
     assert any(event.phase == GazeLoopPhase.TRIGGERED for event in events)
     assert any(event.result and event.result.status.value == "success" for event in events)
+
+
+def test_gaze_loop_click_mode_auto_confirms_explicit_gaze_session() -> None:
+    loop = GazeTrackingLoop(
+        adapter=MacOSPlatformAdapter(dry_run=True),
+        dwell_trigger=DwellTrigger(dwell_ms=500, action=ActionName.CLICK_TARGET),
+        auto_confirm_actions={ActionName.CLICK_TARGET},
+    )
+    targets = [
+        NormalizedScreenTarget(target_id="compose", label="Compose button", role="button", x=0.5, y=0.2, width=0.2, height=0.12)
+    ]
+    samples = [
+        GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.85, delta_ms=250),
+        GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.86, delta_ms=250),
+    ]
+
+    events = loop.run_trace(samples, targets, EnvironmentSnapshot(active_app="Mail"))
+
+    assert any(event.phase == GazeLoopPhase.TRIGGERED for event in events)
+    assert any(event.result and event.result.details["commands"][0][3] == "click-normalized" for event in events)

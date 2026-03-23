@@ -100,9 +100,16 @@ class GazeTargetInferencer:
 class DwellTrigger:
     """Trigger a conservative highlight action after stable dwell on the same target."""
 
-    def __init__(self, *, dwell_ms: int = 700, min_confidence: float = 0.65) -> None:
+    def __init__(
+        self,
+        *,
+        dwell_ms: int = 700,
+        min_confidence: float = 0.65,
+        action: ActionName = ActionName.HIGHLIGHT_TARGET,
+    ) -> None:
         self.dwell_ms = dwell_ms
         self.min_confidence = min_confidence
+        self.action = action
         self.current_target_id: str | None = None
         self.accumulated_ms = 0
         self.triggered_target_id: str | None = None
@@ -123,18 +130,50 @@ class DwellTrigger:
 
         if self.accumulated_ms >= self.dwell_ms and self.triggered_target_id != target.target_id:
             self.triggered_target_id = target.target_id
-            return ActionProposal(
-                action=ActionName.HIGHLIGHT_TARGET,
-                arguments={
-                    "target_ref": target.target_id,
-                    "target_label": target.label,
-                },
-                confidence=target.confidence,
-                risk=RiskLevel.L0,
-                requires_confirmation=False,
-                rationale="Stable dwell on a large target triggered a conservative highlight action.",
-            )
+            return self._build_proposal(observation, target)
         return None
+
+    def _build_proposal(self, observation: GazeObservation, target: GroundedTarget) -> ActionProposal:
+        arguments: dict[str, object] = {
+            "target_ref": target.target_id,
+            "target_label": target.label,
+        }
+        if target.bounds is not None:
+            arguments["target_bounds"] = target.bounds.model_dump(mode="json")
+        if observation.x_norm is not None and observation.y_norm is not None:
+            arguments["normalized_point"] = {
+                "x": observation.x_norm,
+                "y": observation.y_norm,
+            }
+
+        rationale = "Stable dwell on a large target triggered a conservative highlight action."
+        risk = RiskLevel.L0
+        requires_confirmation = False
+
+        if self.action == ActionName.FOCUS_TARGET:
+            rationale = "Stable dwell on a large target triggered a gaze-only pointer move action."
+            risk = RiskLevel.L1
+        elif self.action == ActionName.CLICK_TARGET:
+            rationale = "Stable dwell on a large target triggered a gaze-only click action."
+            risk = RiskLevel.L2
+            requires_confirmation = True
+        elif self.action == ActionName.RIGHT_CLICK_TARGET:
+            rationale = "Stable dwell on a large target triggered a gaze-only right-click action."
+            risk = RiskLevel.L2
+            requires_confirmation = True
+        elif self.action == ActionName.DOUBLE_CLICK_TARGET:
+            rationale = "Stable dwell on a large target triggered a gaze-only double-click action."
+            risk = RiskLevel.L2
+            requires_confirmation = True
+
+        return ActionProposal(
+            action=self.action,
+            arguments=arguments,
+            confidence=target.confidence,
+            risk=risk,
+            requires_confirmation=requires_confirmation,
+            rationale=rationale,
+        )
 
 
 def _region_label(point: NormalizedPoint) -> str:
