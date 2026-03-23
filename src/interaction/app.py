@@ -34,7 +34,7 @@ from interaction.runtime import (
     run_live_webcam_trace,
 )
 from interaction.session import SessionLogger, SessionReplay, serialize_feedback_event
-from interaction.ui import ConsoleOverlayRenderer, OverlayController
+from interaction.ui import ConsoleOverlayRenderer, LiveGazeDotOverlay, OverlayController
 from interaction.vision import CalibrationSample, DwellTrigger, GazeSample, NormalizedPoint, NormalizedScreenTarget, OpenCVWebcamGazeProvider, WebcamProviderError
 
 
@@ -119,6 +119,8 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_live.add_argument("--cursor-smoothing", type=float, default=0.28)
     gaze_live.add_argument("--cursor-edge-padding", type=float, default=0.03)
     gaze_live.add_argument("--cursor-max-step", type=float, default=0.16)
+    gaze_live.add_argument("--show-dot", action="store_true")
+    gaze_live.add_argument("--dot-size", type=int, default=28)
     gaze_live.add_argument("--runtime-dir", default=".interaction")
     gaze_live.add_argument("--session-name", default="gaze-live")
     gaze_live.add_argument("--execute", action="store_true")
@@ -389,6 +391,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
+    visualization = _gaze_visualization_payload(args)
     if profile is None:
         events = [
             GazeFeedbackEvent(
@@ -415,11 +418,21 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                     "error": "missing_calibration_profile",
                     "message": "No live webcam calibration profile is saved yet. Run `interaction gaze-calibrate` first.",
                 },
+                "gaze_visualization": visualization,
                 "calibration_profile": None,
             },
         )
 
     provider = OpenCVWebcamGazeProvider(camera_index=camera_index)
+    point_visualizer = None
+    if args.show_dot:
+        try:
+            point_visualizer = LiveGazeDotOverlay(size=max(12, args.dot_size))
+            point_visualizer.open()
+            visualization["status"] = "enabled"
+        except Exception as error:
+            visualization["status"] = "error"
+            visualization["error"] = str(error)
     loop = GazeTrackingLoop(
         adapter=MacOSPlatformAdapter(dry_run=effective_dry_run),
         dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action, cooldown_ms=max(0, args.action_cooldown_ms)),
@@ -442,6 +455,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 smoothing=max(0.0, min(1.0, args.cursor_smoothing)),
                 edge_padding=max(0.0, min(0.45, args.cursor_edge_padding)),
                 max_step=max(0.01, min(1.0, args.cursor_max_step)),
+                point_visualizer=point_visualizer,
             )
         else:
             events, summary = run_live_webcam_trace(
@@ -451,6 +465,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 delta_ms=args.delta_ms,
                 targets=default_webcam_targets(),
                 environment=EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera"),
+                point_visualizer=point_visualizer,
             )
         live_gaze = {"status": "success", **summary}
     except WebcamProviderError as error:
@@ -466,6 +481,8 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
         }
     finally:
         provider.close()
+        if point_visualizer is not None:
+            point_visualizer.close()
     return _build_payload(
         source="gaze",
         events=events,
@@ -480,6 +497,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
             "live_gaze": live_gaze,
             "cursor_settings": _cursor_settings_payload(args),
             "gaze_control_settings": _gaze_control_settings_payload(args),
+            "gaze_visualization": visualization,
             "calibration_profile": {
                 "x_scale": profile.x_scale,
                 "y_scale": profile.y_scale,
@@ -898,6 +916,14 @@ def _gaze_control_settings_payload(args: argparse.Namespace) -> dict[str, int]:
     return {
         "action_cooldown_ms": max(0, int(getattr(args, "action_cooldown_ms", 900))),
         "drag_timeout_ms": max(0, int(getattr(args, "drag_timeout_ms", 3000))),
+    }
+
+
+def _gaze_visualization_payload(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "show_dot": bool(getattr(args, "show_dot", False)),
+        "dot_size": max(12, int(getattr(args, "dot_size", 28))),
+        "status": "disabled",
     }
 
 

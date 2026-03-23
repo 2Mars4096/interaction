@@ -47,7 +47,10 @@ class OpenCVWebcamGazeProvider:
         self.camera_index = camera_index
         self.capture: cv2.VideoCapture | None = None
         self.face_cascade = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
-        self.eye_cascade = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_eye.xml"))
+        self.eye_cascades = [
+            cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_eye_tree_eyeglasses.xml")),
+            cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_eye.xml")),
+        ]
 
     def open(self) -> None:
         if self.capture is not None:
@@ -84,7 +87,7 @@ class OpenCVWebcamGazeProvider:
         if frame.size == 0:
             return None
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
+        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=4, minSize=(60, 60))
         if len(faces) == 0:
             return None
 
@@ -92,7 +95,7 @@ class OpenCVWebcamGazeProvider:
         fx, fy, fw, fh = face
         face_gray = gray[fy : fy + fh, fx : fx + fw]
         upper_half = face_gray[: max(1, fh // 2), :]
-        eyes = self.eye_cascade.detectMultiScale(upper_half, scaleFactor=1.1, minNeighbors=8, minSize=(20, 20))
+        eyes = self._detect_eyes(upper_half)
         if len(eyes) == 0:
             return None
 
@@ -162,6 +165,15 @@ class OpenCVWebcamGazeProvider:
             return boxes
         widest = sorted(boxes, key=lambda box: box[2] * box[3], reverse=True)[:2]
         return sorted(widest, key=lambda box: box[0])
+
+    def _detect_eyes(self, upper_half: np.ndarray) -> np.ndarray:
+        for cascade in self.eye_cascades:
+            if cascade.empty():
+                continue
+            eyes = cascade.detectMultiScale(upper_half, scaleFactor=1.05, minNeighbors=4, minSize=(16, 16))
+            if len(eyes) > 0:
+                return eyes
+        return np.empty((0, 4), dtype=np.int32)
 
     @staticmethod
     def _estimate_pupil_center(eye_roi: np.ndarray) -> tuple[float, float] | None:

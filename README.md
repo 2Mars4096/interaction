@@ -99,7 +99,7 @@ interaction fusion-smoke
 interaction gaze-smoke
 interaction gaze-calibrate --settle-ms 800 --frames-per-step 6
 interaction gaze-live --frames 18
-interaction gaze-live --frames 24 --action cursor --execute
+interaction gaze-live --frames 24 --action cursor --execute --show-dot
 interaction gaze-live --frames 18 --action click --execute
 interaction gaze-live --frames 24 --action drag --execute
 interaction voice-live --duration 4.0
@@ -110,7 +110,7 @@ interaction replay --session-log .interaction/logs/fusion-smoke.jsonl
 To execute approved live actions instead of only printing dry-run plans, add `--execute` to the relevant command:
 
 ```bash
-interaction gaze-live --frames 24 --action cursor --execute
+interaction gaze-live --frames 24 --action cursor --execute --show-dot
 interaction gaze-live --frames 18 --action click --execute
 interaction gaze-live --frames 24 --action drag --execute
 interaction voice-live --duration 4.0 --execute
@@ -124,14 +124,14 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 interaction gaze-calibrate --settle-ms 800 --frames-per-step 6
-interaction gaze-live --frames 24 --action cursor --execute
+interaction gaze-live --frames 24 --action cursor --execute --show-dot
 interaction gaze-live --frames 18 --action move --execute
 interaction gaze-live --frames 18 --action click --execute
 interaction gaze-live --frames 24 --action drag --execute
 interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 --execute
 ```
 
-During `gaze-live`, use `--action cursor` for continuous cursor follow, then `click`, `right-click`, `double-click`, or `drag` to test gaze-only manipulation on large targets. In `drag` mode, dwell once on the source and dwell again on the destination. During `fusion-live`, look at a large on-screen target and say commands such as `focus this`, `click this`, `right click this`, or `open this`. Confirm pointer actions when prompted.
+During `gaze-live`, use `--action cursor` for continuous cursor follow, then `click`, `right-click`, `double-click`, or `drag` to test gaze-only manipulation on large targets. Add `--show-dot` to render a small live gaze marker on screen during the run. In `drag` mode, dwell once on the source and dwell again on the destination. During `fusion-live`, look at a large on-screen target and say commands such as `focus this`, `click this`, `right click this`, or `open this`. Confirm pointer actions when prompted.
 
 If `cursor` mode feels too twitchy or too sluggish, tune it per run:
 

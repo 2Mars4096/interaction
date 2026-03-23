@@ -188,6 +188,7 @@ def run_live_webcam_trace(
     delta_ms: int,
     targets: list[NormalizedScreenTarget] | None = None,
     environment: EnvironmentSnapshot | None = None,
+    point_visualizer: Any | None = None,
 ) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
     if targets is None:
         targets = default_webcam_targets()
@@ -201,9 +202,13 @@ def run_live_webcam_trace(
         reading = provider.read(delta_ms=delta_ms)
         if reading is None:
             missing_readings += 1
+            _hide_point_visualizer(point_visualizer)
             events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
             continue
         successful_readings += 1
+        if point_visualizer is not None:
+            calibrated_point = loop.calibration_profile.apply(reading.sample.point)
+            _show_point_visualizer(point_visualizer, calibrated_point.x, calibrated_point.y)
         sample_events = loop.process_sample(reading.sample, targets, environment)
         triggered_events += sum(1 for event in sample_events if event.phase == GazeLoopPhase.TRIGGERED)
         events.extend(sample_events)
@@ -232,6 +237,7 @@ def run_live_cursor_follow(
     inferencer: GazeTargetInferencer | None = None,
     smoother: GazeSmoother | None = None,
     targets: list[NormalizedScreenTarget] | None = None,
+    point_visualizer: Any | None = None,
 ) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
     if environment is None:
         environment = EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera")
@@ -258,6 +264,7 @@ def run_live_cursor_follow(
         reading = provider.read(delta_ms=delta_ms)
         if reading is None:
             missing_readings += 1
+            _hide_point_visualizer(point_visualizer)
             events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
             continue
 
@@ -270,6 +277,8 @@ def run_live_cursor_follow(
                 delta_ms=reading.sample.delta_ms,
             )
         )
+        if point_visualizer is not None and observation.x_norm is not None and observation.y_norm is not None:
+            _show_point_visualizer(point_visualizer, observation.x_norm, observation.y_norm)
         target = inferencer.infer(observation, targets)
         if observation.confidence < min_confidence or observation.x_norm is None or observation.y_norm is None:
             low_confidence_readings += 1
@@ -435,3 +444,21 @@ def capture_live_gaze_context(
 def _clamp_with_padding(value: float, padding: float) -> float:
     padding = max(0.0, min(0.45, padding))
     return max(padding, min(1.0 - padding, value))
+
+
+def _show_point_visualizer(point_visualizer: Any | None, x_norm: float, y_norm: float) -> None:
+    if point_visualizer is None:
+        return
+    try:
+        point_visualizer.show_point(x_norm, y_norm)
+    except Exception:
+        return
+
+
+def _hide_point_visualizer(point_visualizer: Any | None) -> None:
+    if point_visualizer is None:
+        return
+    try:
+        point_visualizer.hide()
+    except Exception:
+        return
