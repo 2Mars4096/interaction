@@ -8,8 +8,10 @@
 - [feat] Added bounded two-stage gaze-only drag support: dwell once to arm the drag origin, dwell again to drop, with a normalized `drag_target` execution plan underneath.
 - [feat] Added continuous `gaze-live --action cursor` follow mode so the pointer can track calibrated gaze without waiting for a dwell trigger.
 - [feat] Added cursor-follow tuning controls for deadzone, smoothing, edge padding, and max step so live cursor behavior can be adjusted per machine.
+- [feat] Added gaze-action cooldown and drag timeout controls so live dwell sessions can suppress accidental repeat actions and recover from abandoned drag arms.
+- [fix] Stopped drag mode from entering cooldown at the arm stage; cooldown now applies after the completed drop instead of blocking the second dwell.
 - [infra] Added `numpy` and `opencv-python` to the installable project dependencies and ignored runtime state under `.interaction/`.
-- [test] Added regression coverage for normalized pointer planning, right-click fusion flows, gaze-only click-mode execution planning, bounded drag planning, and continuous cursor-follow planning.
+- [test] Added regression coverage for normalized pointer planning, right-click fusion flows, gaze-only click-mode execution planning, drag-origin timeout recovery, bounded drag planning, and continuous cursor-follow planning.
 
 ## 2026-03-22
 - [fix] Suppressed native OpenCV camera-backend stderr noise during webcam open failures so `gaze-live` and `fusion-live` now return clean structured JSON on denied camera access.

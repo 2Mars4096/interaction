@@ -98,6 +98,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     gaze = subparsers.add_parser("gaze-smoke")
     gaze.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag", "cursor"], default="highlight")
+    gaze.add_argument("--action-cooldown-ms", type=int, default=900)
+    gaze.add_argument("--drag-timeout-ms", type=int, default=3000)
     gaze.add_argument("--cursor-deadzone", type=float, default=0.015)
     gaze.add_argument("--cursor-smoothing", type=float, default=0.28)
     gaze.add_argument("--cursor-edge-padding", type=float, default=0.03)
@@ -111,6 +113,8 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_live.add_argument("--frames", type=int, default=18)
     gaze_live.add_argument("--delta-ms", type=int, default=100)
     gaze_live.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag", "cursor"], default="highlight")
+    gaze_live.add_argument("--action-cooldown-ms", type=int, default=900)
+    gaze_live.add_argument("--drag-timeout-ms", type=int, default=3000)
     gaze_live.add_argument("--cursor-deadzone", type=float, default=0.015)
     gaze_live.add_argument("--cursor-smoothing", type=float, default=0.28)
     gaze_live.add_argument("--cursor-edge-padding", type=float, default=0.03)
@@ -308,8 +312,9 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
     gaze_action = _gaze_action_name(gaze_mode)
     loop = GazeTrackingLoop(
         adapter=MacOSPlatformAdapter(dry_run=effective_dry_run),
-        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action),
+        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action, cooldown_ms=max(0, args.action_cooldown_ms)),
         auto_confirm_actions=_gaze_auto_confirm_actions(gaze_action),
+        drag_timeout_ms=max(0, args.drag_timeout_ms),
     )
     existing = store.load_calibration_profile("default")
     calibration_events: list[GazeFeedbackEvent] = []
@@ -363,6 +368,7 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
             "gaze_action": gaze_action.value,
             "gaze_mode": gaze_mode,
             "cursor_settings": _cursor_settings_payload(args),
+            "gaze_control_settings": _gaze_control_settings_payload(args),
             "calibration_profile": {
                 "x_scale": loop.calibration_profile.x_scale,
                 "y_scale": loop.calibration_profile.y_scale,
@@ -402,6 +408,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 "gaze_action": gaze_action.value,
                 "gaze_mode": gaze_mode,
                 "cursor_settings": _cursor_settings_payload(args),
+                "gaze_control_settings": _gaze_control_settings_payload(args),
                 "camera_index": camera_index,
                 "live_gaze": {
                     "status": "error",
@@ -415,8 +422,9 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
     provider = OpenCVWebcamGazeProvider(camera_index=camera_index)
     loop = GazeTrackingLoop(
         adapter=MacOSPlatformAdapter(dry_run=effective_dry_run),
-        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action),
+        dwell_trigger=DwellTrigger(dwell_ms=settings.dwell_ms, action=gaze_action, cooldown_ms=max(0, args.action_cooldown_ms)),
         auto_confirm_actions=_gaze_auto_confirm_actions(gaze_action),
+        drag_timeout_ms=max(0, args.drag_timeout_ms),
     )
     loop.calibration_profile = profile
     try:
@@ -471,6 +479,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
             "camera_index": camera_index,
             "live_gaze": live_gaze,
             "cursor_settings": _cursor_settings_payload(args),
+            "gaze_control_settings": _gaze_control_settings_payload(args),
             "calibration_profile": {
                 "x_scale": profile.x_scale,
                 "y_scale": profile.y_scale,
@@ -882,6 +891,13 @@ def _cursor_settings_payload(args: argparse.Namespace) -> dict[str, float]:
         "smoothing": max(0.0, min(1.0, float(getattr(args, "cursor_smoothing", 0.28)))),
         "edge_padding": max(0.0, min(0.45, float(getattr(args, "cursor_edge_padding", 0.03)))),
         "max_step": max(0.01, min(1.0, float(getattr(args, "cursor_max_step", 0.16)))),
+    }
+
+
+def _gaze_control_settings_payload(args: argparse.Namespace) -> dict[str, int]:
+    return {
+        "action_cooldown_ms": max(0, int(getattr(args, "action_cooldown_ms", 900))),
+        "drag_timeout_ms": max(0, int(getattr(args, "drag_timeout_ms", 3000))),
     }
 
 

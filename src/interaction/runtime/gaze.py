@@ -29,6 +29,7 @@ class GazeTrackingLoop:
         smoother: GazeSmoother | None = None,
         dwell_trigger: DwellTrigger | None = None,
         auto_confirm_actions: set[ActionName] | None = None,
+        drag_timeout_ms: int = 3000,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
@@ -36,8 +37,10 @@ class GazeTrackingLoop:
         self.smoother = smoother or GazeSmoother()
         self.dwell_trigger = dwell_trigger or DwellTrigger()
         self.auto_confirm_actions = auto_confirm_actions or set()
+        self.drag_timeout_ms = max(0, drag_timeout_ms)
         self.calibration_profile = CalibrationProfile()
         self.pending_drag_origin: DragOrigin | None = None
+        self.pending_drag_elapsed_ms = 0
 
     def calibrate(self, samples: list[CalibrationSample]) -> list[GazeFeedbackEvent]:
         self.calibration_profile = CalibrationProfile.fit(samples)
@@ -68,6 +71,20 @@ class GazeTrackingLoop:
         environment: EnvironmentSnapshot,
     ) -> list[GazeFeedbackEvent]:
         events: list[GazeFeedbackEvent] = []
+        if self.pending_drag_origin is not None:
+            self.pending_drag_elapsed_ms += max(0, sample.delta_ms)
+            if self.pending_drag_elapsed_ms >= self.drag_timeout_ms > 0:
+                timed_out_origin = self.pending_drag_origin
+                self.pending_drag_origin = None
+                self.pending_drag_elapsed_ms = 0
+                events.append(
+                    GazeFeedbackEvent(
+                        phase=GazeLoopPhase.RECOVERING,
+                        message=f'Drag origin at "{timed_out_origin.target.label}" timed out. Start the drag again.',
+                        observation=timed_out_origin.observation,
+                        target=timed_out_origin.target,
+                    )
+                )
         calibrated_point = self.calibration_profile.apply(sample.point)
         observation = self.smoother.smooth(
             GazeSample(
@@ -144,6 +161,7 @@ class GazeTrackingLoop:
     ) -> list[GazeFeedbackEvent]:
         if self.pending_drag_origin is None:
             self.pending_drag_origin = DragOrigin(observation=observation, target=target)
+            self.pending_drag_elapsed_ms = 0
             return [
                 GazeFeedbackEvent(
                     phase=GazeLoopPhase.TRIGGERED,
@@ -155,7 +173,20 @@ class GazeTrackingLoop:
             ]
 
         origin = self.pending_drag_origin
+        if target.target_id == origin.target.target_id:
+            self.pending_drag_elapsed_ms = 0
+            return [
+                GazeFeedbackEvent(
+                    phase=GazeLoopPhase.RECOVERING,
+                    message="Drag destination still matches the source. Look at a different drop target and dwell again.",
+                    observation=observation,
+                    target=target,
+                    proposal=proposal,
+                )
+            ]
+
         self.pending_drag_origin = None
+        self.pending_drag_elapsed_ms = 0
         drag_proposal = self._build_drag_proposal(origin, observation, target)
         decision = self.broker.decide(drag_proposal)
         auto_confirmed = False
@@ -174,6 +205,7 @@ class GazeTrackingLoop:
             ]
         request = self.broker.build_execution_request(decision, environment)
         result = self.adapter.execute(request)
+        self.dwell_trigger.start_cooldown()
         message = f'Drag completed from "{origin.target.label}" to "{target.label}".'
         if auto_confirmed:
             message = f'Explicit gaze-mode drag completed from "{origin.target.label}" to "{target.label}".'

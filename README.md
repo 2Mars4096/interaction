@@ -143,6 +143,13 @@ interaction gaze-live --frames 24 --action cursor --execute \
   --cursor-max-step 0.14
 ```
 
+If dwell actions feel too eager, raise the cooldown or extend the drag-arm timeout:
+
+```bash
+interaction gaze-live --frames 18 --action click --execute --action-cooldown-ms 1200
+interaction gaze-live --frames 24 --action drag --execute --action-cooldown-ms 1200 --drag-timeout-ms 4000
+```
+
 ## Working Product Shape
 
 - **Voice for intent**: "open that", "translate this", "scroll slower", "reply in Chinese"

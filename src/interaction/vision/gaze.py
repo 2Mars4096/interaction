@@ -106,21 +106,37 @@ class DwellTrigger:
         dwell_ms: int = 700,
         min_confidence: float = 0.65,
         action: ActionName = ActionName.HIGHLIGHT_TARGET,
+        cooldown_ms: int = 900,
     ) -> None:
         self.dwell_ms = dwell_ms
         self.min_confidence = min_confidence
         self.action = action
+        self.cooldown_ms = max(0, cooldown_ms)
         self.current_target_id: str | None = None
         self.accumulated_ms = 0
         self.triggered_target_id: str | None = None
+        self.cooldown_remaining_ms = 0
+
+    def start_cooldown(self) -> None:
+        self.cooldown_remaining_ms = self.cooldown_ms
+        self.current_target_id = None
+        self.accumulated_ms = 0
+        self.triggered_target_id = None
 
     def update(self, observation: GazeObservation, target: GroundedTarget | None) -> ActionProposal | None:
+        delta_ms = observation.fixation_ms or 0
+        if self.cooldown_remaining_ms > 0:
+            self.cooldown_remaining_ms = max(0, self.cooldown_remaining_ms - delta_ms)
+            self.current_target_id = None
+            self.accumulated_ms = 0
+            if self.cooldown_remaining_ms > 0:
+                return None
+
         if target is None or target.confidence < self.min_confidence:
             self.current_target_id = None
             self.accumulated_ms = 0
             return None
 
-        delta_ms = observation.fixation_ms or 0
         if target.target_id == self.current_target_id:
             self.accumulated_ms += delta_ms
         else:
@@ -130,6 +146,8 @@ class DwellTrigger:
 
         if self.accumulated_ms >= self.dwell_ms and self.triggered_target_id != target.target_id:
             self.triggered_target_id = target.target_id
+            if self.action != ActionName.DRAG_TARGET:
+                self.start_cooldown()
             return self._build_proposal(observation, target)
         return None
 

@@ -52,4 +52,5 @@ interaction fusion-smoke
 
 - The current tester-facing MVP path now includes live voice, live webcam gaze, continuous cursor follow, explicit gaze-only dwell manipulation modes including bounded drag, and a live sequential multimodal `fusion-live` demo. Webcam gaze remains heuristic and region-based, and the multimodal path is still sequential rather than a continuous concurrent session stack.
 - The cursor-follow path exposes tunable `deadzone`, `smoothing`, `edge_padding`, and `max_step` controls for per-machine adjustment during manual testing.
+- The gaze-only dwell path now also exposes `action_cooldown_ms` and `drag_timeout_ms` controls so testers can reduce repeated clicks and recover cleanly from an abandoned drag arm.
 - This document closes the backlog item around acceptable latency, accuracy, and accidental-action targets for the first MVP trial.

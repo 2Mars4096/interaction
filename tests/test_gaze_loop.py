@@ -87,6 +87,27 @@ def test_dwell_trigger_click_mode_includes_normalized_point() -> None:
     assert proposal.arguments["target_bounds"]["width"] == pytest.approx(0.2)
 
 
+def test_dwell_trigger_respects_action_cooldown_before_rearming() -> None:
+    compose = NormalizedScreenTarget(target_id="compose", label="Compose", role="button", x=0.5, y=0.2, width=0.2, height=0.1).to_grounded_target(0.9)
+    sidebar = NormalizedScreenTarget(target_id="sidebar", label="Sidebar", role="panel", x=0.02, y=0.1, width=0.2, height=0.7).to_grounded_target(0.9)
+    trigger = DwellTrigger(dwell_ms=500, min_confidence=0.6, cooldown_ms=600)
+    smoother = GazeSmoother(window_size=1)
+
+    observation1 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=250))
+    observation2 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=250))
+    observation3 = smoother.smooth(GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.9, delta_ms=250))
+    observation4 = smoother.smooth(GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.9, delta_ms=250))
+    observation5 = smoother.smooth(GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.9, delta_ms=250))
+    observation6 = smoother.smooth(GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.9, delta_ms=250))
+
+    assert trigger.update(observation1, compose) is None
+    assert trigger.update(observation2, compose) is not None
+    assert trigger.update(observation3, sidebar) is None
+    assert trigger.update(observation4, sidebar) is None
+    assert trigger.update(observation5, sidebar) is None
+    assert trigger.update(observation6, sidebar) is not None
+
+
 def test_gaze_loop_triggers_highlight_dry_run() -> None:
     loop = GazeTrackingLoop(adapter=MacOSPlatformAdapter(dry_run=True))
     targets = [
@@ -149,3 +170,28 @@ def test_gaze_loop_drag_mode_arms_then_executes_drag() -> None:
         event.result and event.result.details["commands"][0][3] == "drag-normalized"
         for event in events
     )
+
+
+def test_gaze_loop_drag_origin_times_out_when_destination_never_arrives() -> None:
+    loop = GazeTrackingLoop(
+        adapter=MacOSPlatformAdapter(dry_run=True),
+        dwell_trigger=DwellTrigger(dwell_ms=500, action=ActionName.DRAG_TARGET),
+        auto_confirm_actions={ActionName.DRAG_TARGET},
+        smoother=GazeSmoother(window_size=1),
+        drag_timeout_ms=600,
+    )
+    targets = [
+        NormalizedScreenTarget(target_id="compose", label="Compose button", role="button", x=0.5, y=0.2, width=0.2, height=0.12),
+    ]
+    samples = [
+        GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.85, delta_ms=250),
+        GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.86, delta_ms=250),
+        GazeSample(point=NormalizedPoint(0.9, 0.9), confidence=0.87, delta_ms=350),
+        GazeSample(point=NormalizedPoint(0.9, 0.9), confidence=0.88, delta_ms=350),
+    ]
+
+    events = loop.run_trace(samples, targets, EnvironmentSnapshot(active_app="Mail"))
+
+    assert any(event.message.startswith("Drag origin armed") for event in events)
+    assert any(event.message.startswith('Drag origin at "Compose button" timed out.') for event in events)
+    assert all(not (event.result and event.result.details["commands"][0][3] == "drag-normalized") for event in events)
