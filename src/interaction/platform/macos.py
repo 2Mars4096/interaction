@@ -79,6 +79,7 @@ class MacOSPlatformAdapter(PlatformAdapter):
                 ActionName.CLICK_TARGET.value,
                 ActionName.DOUBLE_CLICK_TARGET.value,
                 ActionName.RIGHT_CLICK_TARGET.value,
+                ActionName.DRAG_TARGET.value,
                 ActionName.SCROLL.value,
                 ActionName.OPEN_APP.value,
                 ActionName.SWITCH_APP.value,
@@ -90,6 +91,7 @@ class MacOSPlatformAdapter(PlatformAdapter):
                 ActionName.CLICK_TARGET.value,
                 ActionName.DOUBLE_CLICK_TARGET.value,
                 ActionName.RIGHT_CLICK_TARGET.value,
+                ActionName.DRAG_TARGET.value,
             ),
             notes=(
                 "Target-only pointer actions can use normalized gaze points or normalized target bounds.",
@@ -143,6 +145,13 @@ class MacOSPlatformAdapter(PlatformAdapter):
             escaped = self._escape_applescript(text)
             script = f'tell application "System Events" to keystroke "{escaped}"'
             return [CommandSpec(("osascript", "-e", script))]
+        if action == ActionName.DRAG_TARGET:
+            drag_plan = self._drag_spec(proposal.arguments)
+            if drag_plan is not None:
+                return [drag_plan]
+            if self.dry_run:
+                return [self._notification_spec("Interaction Pointer", self._target_message(proposal.arguments, fallback="Would drag from the current source to the current target."))]
+            return None
         if action in {ActionName.CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET}:
             if point is None:
                 if normalized_point is not None:
@@ -180,31 +189,80 @@ class MacOSPlatformAdapter(PlatformAdapter):
             )
         )
 
+    def _drag_spec(self, arguments: dict[str, Any]) -> CommandSpec | None:
+        start_point = self._extract_prefixed_screen_point(arguments, prefix="start_")
+        end_point = self._extract_prefixed_screen_point(arguments, prefix="end_")
+        if start_point is not None and end_point is not None:
+            return self._python_runtime_multi_spec("drag", start_point, end_point)
+
+        start_normalized = self._extract_prefixed_normalized_point(arguments, prefix="start_")
+        end_normalized = self._extract_prefixed_normalized_point(arguments, prefix="end_")
+        if start_normalized is None:
+            start_normalized = self._extract_prefixed_target_bounds_center(arguments, prefix="start_")
+        if end_normalized is None:
+            end_normalized = self._extract_prefixed_target_bounds_center(arguments, prefix="end_")
+        if start_normalized is not None and end_normalized is not None:
+            return self._python_runtime_multi_spec("drag-normalized", start_normalized, end_normalized)
+        return None
+
+    def _python_runtime_multi_spec(self, command: str, *points: Point) -> CommandSpec:
+        coordinates: list[str] = []
+        for x, y in points:
+            coordinates.extend((f"{x}", f"{y}"))
+        return CommandSpec(
+            (
+                sys.executable,
+                "-m",
+                "interaction.platform.macos_runtime",
+                command,
+                *coordinates,
+            )
+        )
+
     @staticmethod
     def _extract_screen_point(arguments: dict[str, Any]) -> Point | None:
         raw_point = arguments.get("screen_point")
-        if not isinstance(raw_point, dict):
-            return None
-        x = raw_point.get("x")
-        y = raw_point.get("y")
-        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
-            return None
-        return float(x), float(y)
+        return MacOSPlatformAdapter._coerce_point_dict(raw_point, clamp=False)
+
+    @staticmethod
+    def _extract_prefixed_screen_point(arguments: dict[str, Any], *, prefix: str) -> Point | None:
+        raw_point = arguments.get(f"{prefix}screen_point")
+        return MacOSPlatformAdapter._coerce_point_dict(raw_point, clamp=False)
 
     @staticmethod
     def _extract_normalized_point(arguments: dict[str, Any]) -> Point | None:
         raw_point = arguments.get("normalized_point")
+        return MacOSPlatformAdapter._coerce_point_dict(raw_point, clamp=True)
+
+    @staticmethod
+    def _extract_prefixed_normalized_point(arguments: dict[str, Any], *, prefix: str) -> Point | None:
+        raw_point = arguments.get(f"{prefix}normalized_point")
+        return MacOSPlatformAdapter._coerce_point_dict(raw_point, clamp=True)
+
+    @staticmethod
+    def _coerce_point_dict(raw_point: Any, *, clamp: bool) -> Point | None:
         if not isinstance(raw_point, dict):
             return None
         x = raw_point.get("x")
         y = raw_point.get("y")
         if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
             return None
-        return MacOSPlatformAdapter._clamp(float(x)), MacOSPlatformAdapter._clamp(float(y))
+        if clamp:
+            return MacOSPlatformAdapter._clamp(float(x)), MacOSPlatformAdapter._clamp(float(y))
+        return float(x), float(y)
 
     @staticmethod
     def _extract_target_bounds_center(arguments: dict[str, Any]) -> Point | None:
         raw_bounds = arguments.get("target_bounds")
+        return MacOSPlatformAdapter._bounds_center(raw_bounds)
+
+    @staticmethod
+    def _extract_prefixed_target_bounds_center(arguments: dict[str, Any], *, prefix: str) -> Point | None:
+        raw_bounds = arguments.get(f"{prefix}target_bounds")
+        return MacOSPlatformAdapter._bounds_center(raw_bounds)
+
+    @staticmethod
+    def _bounds_center(raw_bounds: Any) -> Point | None:
         if not isinstance(raw_bounds, dict):
             return None
         x = raw_bounds.get("x")
@@ -234,6 +292,8 @@ class MacOSPlatformAdapter(PlatformAdapter):
 
     @staticmethod
     def _pointer_command(action: ActionName) -> str:
+        if action == ActionName.DRAG_TARGET:
+            return "drag"
         if action == ActionName.DOUBLE_CLICK_TARGET:
             return "double-click"
         if action == ActionName.RIGHT_CLICK_TARGET:
@@ -242,6 +302,8 @@ class MacOSPlatformAdapter(PlatformAdapter):
 
     @staticmethod
     def _pointer_message(action: ActionName) -> str:
+        if action == ActionName.DRAG_TARGET:
+            return "Would drag from the current source to the current target."
         if action == ActionName.DOUBLE_CLICK_TARGET:
             return "Would double-click the current target."
         if action == ActionName.RIGHT_CLICK_TARGET:

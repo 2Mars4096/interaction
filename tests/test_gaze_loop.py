@@ -122,3 +122,30 @@ def test_gaze_loop_click_mode_auto_confirms_explicit_gaze_session() -> None:
 
     assert any(event.phase == GazeLoopPhase.TRIGGERED for event in events)
     assert any(event.result and event.result.details["commands"][0][3] == "click-normalized" for event in events)
+
+
+def test_gaze_loop_drag_mode_arms_then_executes_drag() -> None:
+    loop = GazeTrackingLoop(
+        adapter=MacOSPlatformAdapter(dry_run=True),
+        dwell_trigger=DwellTrigger(dwell_ms=500, action=ActionName.DRAG_TARGET),
+        auto_confirm_actions={ActionName.DRAG_TARGET},
+        smoother=GazeSmoother(window_size=1),
+    )
+    targets = [
+        NormalizedScreenTarget(target_id="compose", label="Compose button", role="button", x=0.5, y=0.2, width=0.2, height=0.12),
+        NormalizedScreenTarget(target_id="sidebar", label="Mail sidebar", role="panel", x=0.02, y=0.1, width=0.20, height=0.75),
+    ]
+    samples = [
+        GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.85, delta_ms=250),
+        GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.86, delta_ms=250),
+        GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.87, delta_ms=250),
+        GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.88, delta_ms=250),
+    ]
+
+    events = loop.run_trace(samples, targets, EnvironmentSnapshot(active_app="Mail"))
+
+    assert any(event.phase == GazeLoopPhase.TRIGGERED and event.result is None for event in events)
+    assert any(
+        event.result and event.result.details["commands"][0][3] == "drag-normalized"
+        for event in events
+    )

@@ -29,3 +29,4 @@ This document captures the Phase 1 spec-review outcome for the first bounded com
 - `L3` actions are blocked by default in the MVP broker policy.
 - The first safe-key allow-list is intentionally tiny.
 - Webcam gaze precision is assumed to be coarse, so target-driven commands should prefer confirmation over aggressive auto-execution.
+- `drag_target` now exists as an explicit tester-facing gaze-control mode, but it is still outside the original first-10 showcase command list.

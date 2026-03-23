@@ -21,6 +21,7 @@ class BrokerPolicy:
             ActionName.CLICK_TARGET,
             ActionName.DOUBLE_CLICK_TARGET,
             ActionName.RIGHT_CLICK_TARGET,
+            ActionName.DRAG_TARGET,
             ActionName.TYPE_TEXT,
             ActionName.TRANSLATE_TEXT,
         }:

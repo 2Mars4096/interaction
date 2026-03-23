@@ -105,3 +105,20 @@ def test_app_fusion_smoke_and_replay_create_repeatable_outputs(tmp_path: Path) -
     assert replay_code == 0
     assert replay_payload["records"]
     assert replay_payload["final_overlay"]["source"] == "fusion"
+
+
+def test_app_gaze_smoke_drag_mode_creates_drag_plan(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / ".interaction"
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        exit_code = main(["gaze-smoke", "--runtime-dir", str(runtime_dir), "--action", "drag"])
+    payload = json.loads(stdout.getvalue())
+
+    assert exit_code == 0
+    assert payload["gaze_action"] == "drag_target"
+    assert any(event["result"] is None and event["message"].startswith("Drag origin armed") for event in payload["events"])
+    assert any(
+        event["result"]
+        and event["result"]["details"]["commands"][0][3] == "drag-normalized"
+        for event in payload["events"]
+    )

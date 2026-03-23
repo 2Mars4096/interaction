@@ -1,4 +1,4 @@
-"""Minimal macOS runtime helpers for cursor movement and clicks."""
+"""Minimal macOS runtime helpers for cursor movement, clicks, and drag."""
 
 from __future__ import annotations
 
@@ -86,6 +86,23 @@ def right_click_normalized(x: float, y: float) -> None:
     right_click(point.x, point.y)
 
 
+def drag(start_x: float, start_y: float, end_x: float, end_y: float) -> None:
+    quartz = _load_quartz()
+    start = CGPoint(start_x, start_y)
+    end = CGPoint(end_x, end_y)
+    _post_mouse_event(quartz, 5, start, 0)
+    _post_mouse_event(quartz, 1, start, 0)
+    _post_mouse_event(quartz, 6, end, 0)
+    _post_mouse_event(quartz, 2, end, 0)
+
+
+def drag_normalized(start_x: float, start_y: float, end_x: float, end_y: float) -> None:
+    quartz = _load_quartz()
+    start = _normalized_to_point(quartz, start_x, start_y)
+    end = _normalized_to_point(quartz, end_x, end_y)
+    drag(start.x, start.y, end.x, end.y)
+
+
 def _normalized_to_point(quartz: ctypes.CDLL, x: float, y: float) -> CGPoint:
     display_id = quartz.CGMainDisplayID()
     width = max(1, int(quartz.CGDisplayPixelsWide(display_id)))
@@ -106,32 +123,40 @@ def _main() -> int:
             "click",
             "double-click",
             "right-click",
+            "drag",
             "move-normalized",
             "click-normalized",
             "double-click-normalized",
             "right-click-normalized",
+            "drag-normalized",
         ],
     )
-    parser.add_argument("x", type=float)
-    parser.add_argument("y", type=float)
+    parser.add_argument("coordinates", nargs="+", type=float)
     args = parser.parse_args()
+    required = 4 if "drag" in args.command else 2
+    if len(args.coordinates) != required:
+        parser.error(f"{args.command} requires {required} numeric coordinates.")
 
     if args.command == "move":
-        move(args.x, args.y)
+        move(args.coordinates[0], args.coordinates[1])
     elif args.command == "click":
-        click(args.x, args.y)
+        click(args.coordinates[0], args.coordinates[1])
     elif args.command == "double-click":
-        double_click(args.x, args.y)
+        double_click(args.coordinates[0], args.coordinates[1])
     elif args.command == "right-click":
-        right_click(args.x, args.y)
+        right_click(args.coordinates[0], args.coordinates[1])
+    elif args.command == "drag":
+        drag(*args.coordinates)
     elif args.command == "move-normalized":
-        move_normalized(args.x, args.y)
+        move_normalized(args.coordinates[0], args.coordinates[1])
     elif args.command == "click-normalized":
-        click_normalized(args.x, args.y)
+        click_normalized(args.coordinates[0], args.coordinates[1])
     elif args.command == "double-click-normalized":
-        double_click_normalized(args.x, args.y)
+        double_click_normalized(args.coordinates[0], args.coordinates[1])
+    elif args.command == "right-click-normalized":
+        right_click_normalized(args.coordinates[0], args.coordinates[1])
     else:
-        right_click_normalized(args.x, args.y)
+        drag_normalized(*args.coordinates)
     return 0
 
 

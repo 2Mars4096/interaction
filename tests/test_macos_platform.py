@@ -155,3 +155,28 @@ def test_macos_right_click_target_with_normalized_point_is_plannable_after_confi
     assert result.status.value == "success"
     assert result.details["commands"][0][2] == "interaction.platform.macos_runtime"
     assert result.details["commands"][0][3] == "right-click-normalized"
+
+
+def test_macos_drag_target_with_normalized_points_is_plannable_after_confirmation() -> None:
+    broker = CommandBroker()
+    proposal = ActionProposal(
+        action=ActionName.DRAG_TARGET,
+        arguments={
+            "start_target_ref": "target_1",
+            "target_ref": "target_2",
+            "start_normalized_point": {"x": 0.22, "y": 0.31},
+            "end_normalized_point": {"x": 0.74, "y": 0.69},
+        },
+        confidence=0.85,
+        risk=RiskLevel.L2,
+        requires_confirmation=True,
+        rationale="Drag requires confirmation in MVP.",
+    )
+
+    decision = broker.confirm(broker.decide(proposal))
+    request = broker.build_execution_request(decision, EnvironmentSnapshot(active_app="Safari"))
+    result = MacOSPlatformAdapter(dry_run=True).execute(request)
+
+    assert result.status.value == "success"
+    assert result.details["commands"][0][2] == "interaction.platform.macos_runtime"
+    assert result.details["commands"][0][3] == "drag-normalized"

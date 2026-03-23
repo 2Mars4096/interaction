@@ -96,7 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_calibrate.add_argument("--session-name", default="gaze-calibrate")
 
     gaze = subparsers.add_parser("gaze-smoke")
-    gaze.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click"], default="highlight")
+    gaze.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag"], default="highlight")
     gaze.add_argument("--runtime-dir", default=".interaction")
     gaze.add_argument("--session-name", default="gaze-smoke")
     gaze.add_argument("--execute", action="store_true")
@@ -105,7 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_live.add_argument("--camera-index", type=int, default=None)
     gaze_live.add_argument("--frames", type=int, default=18)
     gaze_live.add_argument("--delta-ms", type=int, default=100)
-    gaze_live.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click"], default="highlight")
+    gaze_live.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag"], default="highlight")
     gaze_live.add_argument("--runtime-dir", default=".interaction")
     gaze_live.add_argument("--session-name", default="gaze-live")
     gaze_live.add_argument("--execute", action="store_true")
@@ -317,12 +317,25 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         NormalizedScreenTarget(target_id="compose", label="Compose button", role="button", x=0.52, y=0.16, width=0.22, height=0.12),
         NormalizedScreenTarget(target_id="sidebar", label="Mail sidebar", role="panel", x=0.02, y=0.1, width=0.20, height=0.75),
     ]
-    trace = [
-        GazeSample(point=NormalizedPoint(0.55, 0.20), confidence=0.82, delta_ms=200),
-        GazeSample(point=NormalizedPoint(0.56, 0.20), confidence=0.84, delta_ms=200),
-        GazeSample(point=NormalizedPoint(0.56, 0.20), confidence=0.85, delta_ms=200),
-        GazeSample(point=NormalizedPoint(0.57, 0.20), confidence=0.86, delta_ms=200),
-    ]
+    if gaze_action == ActionName.DRAG_TARGET:
+        trace = [
+            GazeSample(point=NormalizedPoint(0.55, 0.20), confidence=0.82, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.56, 0.20), confidence=0.84, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.56, 0.20), confidence=0.85, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.57, 0.20), confidence=0.86, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.09, 0.45), confidence=0.86, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.08, 0.46), confidence=0.87, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.08, 0.47), confidence=0.88, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.07, 0.48), confidence=0.89, delta_ms=250),
+            GazeSample(point=NormalizedPoint(0.07, 0.49), confidence=0.89, delta_ms=250),
+        ]
+    else:
+        trace = [
+            GazeSample(point=NormalizedPoint(0.55, 0.20), confidence=0.82, delta_ms=200),
+            GazeSample(point=NormalizedPoint(0.56, 0.20), confidence=0.84, delta_ms=200),
+            GazeSample(point=NormalizedPoint(0.56, 0.20), confidence=0.85, delta_ms=200),
+            GazeSample(point=NormalizedPoint(0.57, 0.20), confidence=0.86, delta_ms=200),
+        ]
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
@@ -838,12 +851,13 @@ def _gaze_action_name(value: str) -> ActionName:
         "click": ActionName.CLICK_TARGET,
         "right-click": ActionName.RIGHT_CLICK_TARGET,
         "double-click": ActionName.DOUBLE_CLICK_TARGET,
+        "drag": ActionName.DRAG_TARGET,
     }
     return mapping[value]
 
 
 def _gaze_auto_confirm_actions(action: ActionName) -> set[ActionName]:
-    if action in {ActionName.CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET}:
+    if action in {ActionName.CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET, ActionName.DRAG_TARGET}:
         return {action}
     return set()
 

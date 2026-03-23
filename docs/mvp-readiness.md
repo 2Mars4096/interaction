@@ -8,7 +8,7 @@ Define when the first tester-facing macOS prototype is ready for a real user tri
 
 - `interaction voice-live` or `python scripts/phase6_live_voice_smoke.py` for real microphone capture and bounded voice commands; add `--execute` to run approved live actions
 - `interaction gaze-calibrate` or `python scripts/phase7_webcam_calibrate.py` for live webcam calibration
-- `interaction gaze-live` or `python scripts/phase7_live_webcam_smoke.py` for the live webcam gaze path; use `--action move|click|right-click|double-click` for explicit gaze-only manipulation tests
+- `interaction gaze-live` or `python scripts/phase7_live_webcam_smoke.py` for the live webcam gaze path; use `--action move|click|right-click|double-click|drag` for explicit gaze-only manipulation tests
 - `interaction fusion-live` or `python scripts/phase8_live_fusion_smoke.py` for the live sequential gaze-plus-voice demo; add `--execute` to run approved live pointer actions
 - `interaction gaze-smoke` or `python scripts/phase5_productization_smoke.py gaze-smoke` for the scripted gaze baseline
 - `python scripts/phase3_webcam_smoke.py --frames 12` for the lower-level webcam provider diagnostic
@@ -42,11 +42,12 @@ Define when the first tester-facing macOS prototype is ready for a real user tri
 python scripts/phase6_live_voice_smoke.py --duration 4.0
 python scripts/phase7_webcam_calibrate.py --settle-ms 800 --frames-per-step 6
 python scripts/phase7_live_webcam_smoke.py --frames 18 --action click --execute
+python scripts/phase7_live_webcam_smoke.py --frames 24 --action drag --execute
 python scripts/phase8_live_fusion_smoke.py --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 --execute
 interaction fusion-smoke
 ```
 
 ## Notes
 
-- The current tester-facing MVP path now includes live voice, live webcam gaze, explicit gaze-only dwell manipulation modes, and a live sequential multimodal `fusion-live` demo. Webcam gaze remains heuristic and region-based, and the multimodal path is still sequential rather than a continuous concurrent session stack.
+- The current tester-facing MVP path now includes live voice, live webcam gaze, explicit gaze-only dwell manipulation modes including bounded drag, and a live sequential multimodal `fusion-live` demo. Webcam gaze remains heuristic and region-based, and the multimodal path is still sequential rather than a continuous concurrent session stack.
 - This document closes the backlog item around acceptable latency, accuracy, and accidental-action targets for the first MVP trial.

@@ -85,7 +85,7 @@ class CommandBroker:
         return f"Action {proposal.action.value} is allowed by the current MVP broker policy."
 
     def _confirm_reason(self, proposal: ActionProposal) -> str:
-        if proposal.action in {ActionName.CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET}:
+        if proposal.action in {ActionName.CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET, ActionName.DRAG_TARGET}:
             return "Pointer actions require confirmation by default in MVP."
         if proposal.action == ActionName.TYPE_TEXT:
             return "Typing text changes application state and requires confirmation in MVP."
@@ -96,7 +96,9 @@ class CommandBroker:
         return "This action requires confirmation under the current broker policy."
 
     def _confirmation_prompt(self, proposal: ActionProposal) -> str:
-        if proposal.action in {ActionName.CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET}:
+        if proposal.action in {ActionName.CLICK_TARGET, ActionName.DOUBLE_CLICK_TARGET, ActionName.RIGHT_CLICK_TARGET, ActionName.DRAG_TARGET}:
+            if proposal.action == ActionName.DRAG_TARGET:
+                return "Confirm dragging from the current source to the current target?"
             if proposal.action == ActionName.RIGHT_CLICK_TARGET:
                 return "Confirm right-clicking the grounded target?"
             return "Confirm clicking the grounded target?"

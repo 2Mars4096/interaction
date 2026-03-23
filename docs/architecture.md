@@ -104,8 +104,8 @@ src/interaction/
 
 - `src/interaction/contracts/` provides the shared typed schema layer.
 - `src/interaction/control/` now contains the first broker policy engine and execution-request preparation logic.
-- `src/interaction/platform/macos.py` now supports bounded plans for `open_app`, `switch_app`, safe `press_key`, coarse `scroll`, notification-based `highlight_target`, point-based `focus_target`, and coordinate-based or normalized-gaze-based `click_target` / `double_click_target` / `right_click_target`.
-- `src/interaction/platform/macos_runtime.py` contains the minimal Quartz-based cursor move/click/right-click helper used for live point-based actions.
+- `src/interaction/platform/macos.py` now supports bounded plans for `open_app`, `switch_app`, safe `press_key`, coarse `scroll`, notification-based `highlight_target`, point-based `focus_target`, and coordinate-based or normalized-gaze-based `click_target` / `double_click_target` / `right_click_target` / `drag_target`.
+- `src/interaction/platform/macos_runtime.py` contains the minimal Quartz-based cursor move/click/right-click/drag helper used for live point-based actions.
 - `scripts/phase1_macos_smoke.py` is the safe manual smoke harness for this phase.
 - `src/interaction/audio/` now contains the Phase 2 transcript-stream and push-to-talk turn primitives.
 - `src/interaction/audio/macos_speech.py` now provides the Phase 6 macOS live speech wrapper, and `src/interaction/audio/macos_speech_bridge.m` is the small native helper source compiled on demand into `.interaction/bin/`.

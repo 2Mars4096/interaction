@@ -54,6 +54,7 @@ class ActionName(StrEnum):
     CLICK_TARGET = "click_target"
     DOUBLE_CLICK_TARGET = "double_click_target"
     RIGHT_CLICK_TARGET = "right_click_target"
+    DRAG_TARGET = "drag_target"
     SCROLL = "scroll"
     OPEN_APP = "open_app"
     SWITCH_APP = "switch_app"

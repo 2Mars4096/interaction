@@ -165,6 +165,10 @@ class DwellTrigger:
             rationale = "Stable dwell on a large target triggered a gaze-only double-click action."
             risk = RiskLevel.L2
             requires_confirmation = True
+        elif self.action == ActionName.DRAG_TARGET:
+            rationale = "Stable dwell on a large target triggered a gaze-only drag stage."
+            risk = RiskLevel.L2
+            requires_confirmation = True
 
         return ActionProposal(
             action=self.action,

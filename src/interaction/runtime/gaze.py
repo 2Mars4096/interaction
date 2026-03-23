@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from interaction.contracts import ActionName, BrokerDecisionType, EnvironmentSnapshot
+from dataclasses import dataclass
+
+from interaction.contracts import ActionName, ActionProposal, BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
 from interaction.control import CommandBroker
 from interaction.feedback import GazeFeedbackEvent, GazeLoopPhase
 from interaction.platform import MacOSPlatformAdapter, PlatformAdapter
 from interaction.vision import CalibrationProfile, CalibrationSample, DwellTrigger, GazeSample, GazeSmoother, GazeTargetInferencer, NormalizedScreenTarget
+
+
+@dataclass(frozen=True)
+class DragOrigin:
+    observation: GazeObservation
+    target: GroundedTarget
 
 
 class GazeTrackingLoop:
@@ -29,6 +37,7 @@ class GazeTrackingLoop:
         self.dwell_trigger = dwell_trigger or DwellTrigger()
         self.auto_confirm_actions = auto_confirm_actions or set()
         self.calibration_profile = CalibrationProfile()
+        self.pending_drag_origin: DragOrigin | None = None
 
     def calibrate(self, samples: list[CalibrationSample]) -> list[GazeFeedbackEvent]:
         self.calibration_profile = CalibrationProfile.fit(samples)
@@ -89,6 +98,8 @@ class GazeTrackingLoop:
         proposal = self.dwell_trigger.update(observation, target)
         if proposal is None:
             return events
+        if proposal.action == ActionName.DRAG_TARGET:
+            return events + self._handle_drag_stage(proposal, observation, target, environment)
 
         decision = self.broker.decide(proposal)
         auto_confirmed = False
@@ -123,3 +134,92 @@ class GazeTrackingLoop:
             )
         )
         return events
+
+    def _handle_drag_stage(
+        self,
+        proposal: ActionProposal,
+        observation: GazeObservation,
+        target: GroundedTarget,
+        environment: EnvironmentSnapshot,
+    ) -> list[GazeFeedbackEvent]:
+        if self.pending_drag_origin is None:
+            self.pending_drag_origin = DragOrigin(observation=observation, target=target)
+            return [
+                GazeFeedbackEvent(
+                    phase=GazeLoopPhase.TRIGGERED,
+                    message=f'Drag origin armed at "{target.label}". Look at the drop target and dwell again.',
+                    observation=observation,
+                    target=target,
+                    proposal=proposal,
+                )
+            ]
+
+        origin = self.pending_drag_origin
+        self.pending_drag_origin = None
+        drag_proposal = self._build_drag_proposal(origin, observation, target)
+        decision = self.broker.decide(drag_proposal)
+        auto_confirmed = False
+        if decision.decision == BrokerDecisionType.CONFIRM and drag_proposal.action in self.auto_confirm_actions:
+            decision = self.broker.confirm(decision)
+            auto_confirmed = True
+        if decision.decision != BrokerDecisionType.ALLOW:
+            return [
+                GazeFeedbackEvent(
+                    phase=GazeLoopPhase.RECOVERING,
+                    message=decision.reason,
+                    observation=observation,
+                    target=target,
+                    proposal=drag_proposal,
+                )
+            ]
+        request = self.broker.build_execution_request(decision, environment)
+        result = self.adapter.execute(request)
+        message = f'Drag completed from "{origin.target.label}" to "{target.label}".'
+        if auto_confirmed:
+            message = f'Explicit gaze-mode drag completed from "{origin.target.label}" to "{target.label}".'
+        return [
+            GazeFeedbackEvent(
+                phase=GazeLoopPhase.TRIGGERED,
+                message=message,
+                observation=observation,
+                target=target,
+                proposal=drag_proposal,
+                result=result,
+            )
+        ]
+
+    def _build_drag_proposal(
+        self,
+        origin: DragOrigin,
+        observation: GazeObservation,
+        target: GroundedTarget,
+    ) -> ActionProposal:
+        arguments: dict[str, object] = {
+            "start_target_ref": origin.target.target_id,
+            "start_target_label": origin.target.label,
+            "target_ref": target.target_id,
+            "target_label": target.label,
+        }
+        if origin.target.bounds is not None:
+            arguments["start_target_bounds"] = origin.target.bounds.model_dump(mode="json")
+        if target.bounds is not None:
+            arguments["end_target_bounds"] = target.bounds.model_dump(mode="json")
+        if origin.observation.x_norm is not None and origin.observation.y_norm is not None:
+            arguments["start_normalized_point"] = {
+                "x": origin.observation.x_norm,
+                "y": origin.observation.y_norm,
+            }
+        if observation.x_norm is not None and observation.y_norm is not None:
+            arguments["end_normalized_point"] = {
+                "x": observation.x_norm,
+                "y": observation.y_norm,
+            }
+        confidence = min(origin.target.confidence, target.confidence)
+        return ActionProposal(
+            action=ActionName.DRAG_TARGET,
+            arguments=arguments,
+            confidence=confidence,
+            risk=RiskLevel.L2,
+            requires_confirmation=True,
+            rationale=f'Explicit gaze drag resolved from "{origin.target.label}" to "{target.label}".',
+        )
