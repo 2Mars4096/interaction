@@ -20,12 +20,12 @@ The current implementation is still intentionally limited:
 
 - broker policy and execution-request preparation are implemented
 - the macOS adapter supports a small bounded action set with dry-run as the default safety mode
-- live pointer actions currently require explicit screen coordinates and macOS accessibility permissions
+- live pointer actions can now use explicit screen coordinates or normalized gaze-grounded points, and still require macOS accessibility permissions
 - highlight behavior is still a placeholder notification, not a real overlay
 - a push-to-talk voice loop now exists with transcript streaming, bounded voice parsing, confirmation/cancellation handling, and dry-run broker execution
 - a real macOS microphone-to-transcript path now exists through a native helper exposed as `interaction voice-live`
 - a real webcam calibration and live gaze path now exists through `interaction gaze-calibrate` and `interaction gaze-live`
-- a real sequential live multimodal path now exists through `interaction fusion-live`
+- a real sequential live multimodal path now exists through `interaction fusion-live`, including gaze-grounded `focus this`, `click this`, `right click this`, and `open this`
 - a gaze loop now exists with calibration fitting, smoothing, large-target inference, conservative dwell-triggered highlighting, and dry-run broker execution
 - an OpenCV webcam provider path now exists for coarse large-target grounding
 - a multimodal fusion loop now exists with recent-gaze grounding, confidence-based clarification, confirmation handling, and repeatable dry-run metrics
@@ -102,6 +102,25 @@ interaction voice-live --duration 4.0
 interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5
 interaction replay --session-log .interaction/logs/fusion-smoke.jsonl
 ```
+
+To execute approved live actions instead of only printing dry-run plans, add `--execute` to the relevant command:
+
+```bash
+interaction voice-live --duration 4.0 --execute
+interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 --execute
+```
+
+Recommended working demo on macOS:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+interaction gaze-calibrate --settle-ms 800 --frames-per-step 6
+interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 --execute
+```
+
+During `fusion-live`, look at a large on-screen target and say commands such as `focus this`, `click this`, `right click this`, or `open this`. Confirm pointer actions when prompted.
 
 ## Working Product Shape
 

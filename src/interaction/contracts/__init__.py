@@ -1,0 +1,43 @@
+"""Shared runtime contracts for multimodal interaction."""
+
+from .models import (
+    ActionName,
+    ActionProposal,
+    BoundingBox,
+    BrokerDecision,
+    BrokerDecisionType,
+    EnvironmentSnapshot,
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionStatus,
+    GazeObservation,
+    GroundedTarget,
+    MultimodalContextPacket,
+    NormalizedIntent,
+    PlatformName,
+    RiskLevel,
+    SessionMode,
+    SessionState,
+    TranscriptSegment,
+)
+
+__all__ = [
+    "ActionName",
+    "ActionProposal",
+    "BoundingBox",
+    "BrokerDecision",
+    "BrokerDecisionType",
+    "EnvironmentSnapshot",
+    "ExecutionRequest",
+    "ExecutionResult",
+    "ExecutionStatus",
+    "GazeObservation",
+    "GroundedTarget",
+    "MultimodalContextPacket",
+    "NormalizedIntent",
+    "PlatformName",
+    "RiskLevel",
+    "SessionMode",
+    "SessionState",
+    "TranscriptSegment",
+]
