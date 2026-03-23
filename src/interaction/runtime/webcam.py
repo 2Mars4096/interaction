@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from collections.abc import Callable
+import math
 from typing import Any
 
 from interaction.contracts import ActionName, ActionProposal, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
@@ -50,6 +51,48 @@ class LiveGazeContext:
     missing_readings: int
     grounded_readings: int
     dominant_target_hits: int
+
+
+@dataclass
+class CursorFollowController:
+    smoothing: float = 0.28
+    deadzone: float = 0.015
+    edge_padding: float = 0.03
+    max_step: float = 0.16
+    dispatched_point: tuple[float, float] | None = None
+
+    def next_point(self, observation: GazeObservation) -> tuple[float, float] | None:
+        if observation.x_norm is None or observation.y_norm is None:
+            return None
+        target = (
+            _clamp_with_padding(observation.x_norm, self.edge_padding),
+            _clamp_with_padding(observation.y_norm, self.edge_padding),
+        )
+        if self.dispatched_point is None:
+            self.dispatched_point = target
+            return target
+
+        dx = target[0] - self.dispatched_point[0]
+        dy = target[1] - self.dispatched_point[1]
+        distance = math.hypot(dx, dy)
+        if distance < self.deadzone:
+            return None
+
+        dynamic_smoothing = min(0.72, self.smoothing + distance * 0.6)
+        step_x = dx * dynamic_smoothing
+        step_y = dy * dynamic_smoothing
+        step_distance = math.hypot(step_x, step_y)
+        if step_distance > self.max_step and step_distance > 0:
+            scale = self.max_step / step_distance
+            step_x *= scale
+            step_y *= scale
+
+        next_point = (
+            _clamp_with_padding(self.dispatched_point[0] + step_x, self.edge_padding),
+            _clamp_with_padding(self.dispatched_point[1] + step_y, self.edge_padding),
+        )
+        self.dispatched_point = next_point
+        return next_point
 
 
 def default_webcam_calibration_targets() -> tuple[WebcamCalibrationTarget, ...]:
@@ -182,7 +225,10 @@ def run_live_cursor_follow(
     delta_ms: int,
     environment: EnvironmentSnapshot | None = None,
     min_confidence: float = 0.6,
-    min_move_distance: float = 0.02,
+    min_move_distance: float = 0.015,
+    smoothing: float = 0.28,
+    edge_padding: float = 0.03,
+    max_step: float = 0.16,
     inferencer: GazeTargetInferencer | None = None,
     smoother: GazeSmoother | None = None,
     targets: list[NormalizedScreenTarget] | None = None,
@@ -194,13 +240,19 @@ def run_live_cursor_follow(
     inferencer = inferencer or GazeTargetInferencer()
     smoother = smoother or GazeSmoother()
     broker = CommandBroker()
+    cursor = CursorFollowController(
+        smoothing=smoothing,
+        deadzone=min_move_distance,
+        edge_padding=edge_padding,
+        max_step=max_step,
+    )
 
     events: list[GazeFeedbackEvent] = []
     successful_readings = 0
     missing_readings = 0
     moved_events = 0
     low_confidence_readings = 0
-    last_dispatched_point: tuple[float, float] | None = None
+    held_events = 0
 
     for _ in range(frames):
         reading = provider.read(delta_ms=delta_ms)
@@ -231,19 +283,18 @@ def run_live_cursor_follow(
             )
             continue
 
-        point = (observation.x_norm, observation.y_norm)
-        if last_dispatched_point is not None:
-            distance = ((point[0] - last_dispatched_point[0]) ** 2 + (point[1] - last_dispatched_point[1]) ** 2) ** 0.5
-            if distance < min_move_distance:
-                events.append(
-                    GazeFeedbackEvent(
-                        phase=GazeLoopPhase.TRACKING,
-                        message="Live gaze cursor hold is within the movement threshold.",
-                        observation=observation,
-                        target=target,
-                    )
+        point = cursor.next_point(observation)
+        if point is None:
+            held_events += 1
+            events.append(
+                GazeFeedbackEvent(
+                    phase=GazeLoopPhase.TRACKING,
+                    message="Live gaze cursor hold is within the movement threshold.",
+                    observation=observation,
+                    target=target,
                 )
-                continue
+            )
+            continue
 
         proposal = ActionProposal(
             action=ActionName.FOCUS_TARGET,
@@ -261,7 +312,6 @@ def run_live_cursor_follow(
         request = broker.build_execution_request(decision, environment)
         result = adapter.execute(request)
         moved_events += 1
-        last_dispatched_point = point
         message = 'Moved cursor with live gaze follow.'
         if target is not None:
             message = f'Moved cursor with live gaze follow toward "{target.label}".'
@@ -282,6 +332,7 @@ def run_live_cursor_follow(
         "successful_readings": successful_readings,
         "missing_readings": missing_readings,
         "moved_events": moved_events,
+        "held_events": held_events,
         "low_confidence_readings": low_confidence_readings,
     }
 
@@ -379,3 +430,8 @@ def capture_live_gaze_context(
         **summary,
         "dominant_target_hits": context.dominant_target_hits,
     }
+
+
+def _clamp_with_padding(value: float, padding: float) -> float:
+    padding = max(0.0, min(0.45, padding))
+    return max(padding, min(1.0 - padding, value))

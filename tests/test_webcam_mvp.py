@@ -1,10 +1,13 @@
 import io
 import json
+import math
 from contextlib import redirect_stdout
 from pathlib import Path
 
 from interaction.app import main
+from interaction.contracts import GazeObservation
 from interaction.persistence import JsonStateStore, RuntimePaths
+from interaction.runtime.webcam import CursorFollowController
 from interaction.vision import CalibrationProfile, GazeSample, NormalizedPoint, WebcamProviderError, WebcamSampleAggregate
 
 
@@ -173,6 +176,7 @@ def test_gaze_live_cli_cursor_mode_plans_continuous_move_action(monkeypatch, tmp
     assert payload["gaze_mode"] == "cursor"
     assert payload["gaze_action"] == "focus_target"
     assert payload["live_gaze"]["moved_events"] >= 1
+    assert payload["live_gaze"]["held_events"] >= 1
     assert any(
         event["result"]
         and event["result"]["details"]["commands"][0][2] == "interaction.platform.macos_runtime"
@@ -180,6 +184,22 @@ def test_gaze_live_cli_cursor_mode_plans_continuous_move_action(monkeypatch, tmp
         for event in payload["events"]
     )
     assert any(event["message"] == "Live gaze cursor hold is within the movement threshold." for event in payload["events"])
+
+
+def test_cursor_follow_controller_applies_padding_deadzone_and_max_step() -> None:
+    controller = CursorFollowController(smoothing=0.2, deadzone=0.02, edge_padding=0.05, max_step=0.1)
+
+    first = controller.next_point(GazeObservation(confidence=0.9, x_norm=0.0, y_norm=1.0, fixation_ms=100))
+    assert first == (0.05, 0.95)
+
+    second = controller.next_point(GazeObservation(confidence=0.9, x_norm=0.055, y_norm=0.945, fixation_ms=100))
+    assert second is None
+
+    third = controller.next_point(GazeObservation(confidence=0.9, x_norm=1.0, y_norm=0.0, fixation_ms=100))
+    assert third is not None
+    assert 0.05 <= third[0] <= 0.95
+    assert 0.05 <= third[1] <= 0.95
+    assert math.hypot(third[0] - 0.05, third[1] - 0.95) <= 0.100001
 
 
 def test_gaze_live_cli_reports_camera_error(monkeypatch, tmp_path: Path) -> None:

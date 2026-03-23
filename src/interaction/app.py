@@ -98,6 +98,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     gaze = subparsers.add_parser("gaze-smoke")
     gaze.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag", "cursor"], default="highlight")
+    gaze.add_argument("--cursor-deadzone", type=float, default=0.015)
+    gaze.add_argument("--cursor-smoothing", type=float, default=0.28)
+    gaze.add_argument("--cursor-edge-padding", type=float, default=0.03)
+    gaze.add_argument("--cursor-max-step", type=float, default=0.16)
     gaze.add_argument("--runtime-dir", default=".interaction")
     gaze.add_argument("--session-name", default="gaze-smoke")
     gaze.add_argument("--execute", action="store_true")
@@ -107,6 +111,10 @@ def _build_parser() -> argparse.ArgumentParser:
     gaze_live.add_argument("--frames", type=int, default=18)
     gaze_live.add_argument("--delta-ms", type=int, default=100)
     gaze_live.add_argument("--action", choices=["highlight", "move", "click", "right-click", "double-click", "drag", "cursor"], default="highlight")
+    gaze_live.add_argument("--cursor-deadzone", type=float, default=0.015)
+    gaze_live.add_argument("--cursor-smoothing", type=float, default=0.28)
+    gaze_live.add_argument("--cursor-edge-padding", type=float, default=0.03)
+    gaze_live.add_argument("--cursor-max-step", type=float, default=0.16)
     gaze_live.add_argument("--runtime-dir", default=".interaction")
     gaze_live.add_argument("--session-name", default="gaze-live")
     gaze_live.add_argument("--execute", action="store_true")
@@ -354,6 +362,7 @@ def _run_gaze_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str
             "settings": _settings_payload(settings, effective_dry_run),
             "gaze_action": gaze_action.value,
             "gaze_mode": gaze_mode,
+            "cursor_settings": _cursor_settings_payload(args),
             "calibration_profile": {
                 "x_scale": loop.calibration_profile.x_scale,
                 "y_scale": loop.calibration_profile.y_scale,
@@ -392,6 +401,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 "settings": _settings_payload(settings, effective_dry_run),
                 "gaze_action": gaze_action.value,
                 "gaze_mode": gaze_mode,
+                "cursor_settings": _cursor_settings_payload(args),
                 "camera_index": camera_index,
                 "live_gaze": {
                     "status": "error",
@@ -420,6 +430,10 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 delta_ms=args.delta_ms,
                 environment=EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera"),
                 targets=default_webcam_targets(),
+                min_move_distance=max(0.0, args.cursor_deadzone),
+                smoothing=max(0.0, min(1.0, args.cursor_smoothing)),
+                edge_padding=max(0.0, min(0.45, args.cursor_edge_padding)),
+                max_step=max(0.01, min(1.0, args.cursor_max_step)),
             )
         else:
             events, summary = run_live_webcam_trace(
@@ -456,6 +470,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
             "gaze_mode": gaze_mode,
             "camera_index": camera_index,
             "live_gaze": live_gaze,
+            "cursor_settings": _cursor_settings_payload(args),
             "calibration_profile": {
                 "x_scale": profile.x_scale,
                 "y_scale": profile.y_scale,
@@ -859,6 +874,15 @@ def _settings_payload(settings, effective_dry_run: bool) -> dict[str, Any]:
     payload = dict(settings.__dict__)
     payload["effective_dry_run"] = effective_dry_run
     return payload
+
+
+def _cursor_settings_payload(args: argparse.Namespace) -> dict[str, float]:
+    return {
+        "deadzone": max(0.0, float(getattr(args, "cursor_deadzone", 0.015))),
+        "smoothing": max(0.0, min(1.0, float(getattr(args, "cursor_smoothing", 0.28)))),
+        "edge_padding": max(0.0, min(0.45, float(getattr(args, "cursor_edge_padding", 0.03)))),
+        "max_step": max(0.01, min(1.0, float(getattr(args, "cursor_max_step", 0.16)))),
+    }
 
 
 def _gaze_action_name(value: str) -> ActionName:

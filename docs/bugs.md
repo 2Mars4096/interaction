@@ -18,6 +18,7 @@
 - **Gaze-precision limitation:** the current webcam provider and inferencer are tuned for large targets and conservative dwell-based actions, not fine cursor replacement or dense gaze-only desktop control.
 - **Gaze-robustness limitation:** Haar-based face/eye detection and thresholded pupil estimation are heuristic; lighting, glasses glare, and pose can degrade performance.
 - **Gaze-control limitation:** `gaze-live` now has continuous `cursor` follow plus explicit dwell-triggered move/click/right-click/double-click/drag modes, but they are still coarse tester modes and can misfire on small targets or unstable lighting.
+- **Cursor-follow limitation:** the new `cursor` mode uses smoothing, deadzone, edge padding, and max-step heuristics rather than true calibrated eye-tracker dynamics, so some per-machine tuning may still be needed.
 - **Fusion-grounding limitation:** the multimodal fusion loop currently grounds deictic voice commands against the latest fresh gaze target window rather than a richer desktop-semantic target set.
 - **Live-fusion orchestration limitation:** the current `fusion-live` path captures gaze context first and speech second; it is a real MVP demo path, but not yet a continuous concurrent multimodal session loop.
 - **Fusion-threshold limitation:** fused confidence uses fixed heuristic weights and a static clarification threshold; those values have not been tuned against real user-session data yet.

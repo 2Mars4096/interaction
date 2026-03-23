@@ -7,6 +7,7 @@
 - [feat] Added explicit `gaze-live --action ...` dwell modes for gaze-only `move`, `click`, `right-click`, and `double-click` testing.
 - [feat] Added bounded two-stage gaze-only drag support: dwell once to arm the drag origin, dwell again to drop, with a normalized `drag_target` execution plan underneath.
 - [feat] Added continuous `gaze-live --action cursor` follow mode so the pointer can track calibrated gaze without waiting for a dwell trigger.
+- [feat] Added cursor-follow tuning controls for deadzone, smoothing, edge padding, and max step so live cursor behavior can be adjusted per machine.
 - [infra] Added `numpy` and `opencv-python` to the installable project dependencies and ignored runtime state under `.interaction/`.
 - [test] Added regression coverage for normalized pointer planning, right-click fusion flows, gaze-only click-mode execution planning, bounded drag planning, and continuous cursor-follow planning.
 

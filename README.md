@@ -133,6 +133,16 @@ interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 -
 
 During `gaze-live`, use `--action cursor` for continuous cursor follow, then `click`, `right-click`, `double-click`, or `drag` to test gaze-only manipulation on large targets. In `drag` mode, dwell once on the source and dwell again on the destination. During `fusion-live`, look at a large on-screen target and say commands such as `focus this`, `click this`, `right click this`, or `open this`. Confirm pointer actions when prompted.
 
+If `cursor` mode feels too twitchy or too sluggish, tune it per run:
+
+```bash
+interaction gaze-live --frames 24 --action cursor --execute \
+  --cursor-deadzone 0.02 \
+  --cursor-smoothing 0.24 \
+  --cursor-edge-padding 0.04 \
+  --cursor-max-step 0.14
+```
+
 ## Working Product Shape
 
 - **Voice for intent**: "open that", "translate this", "scroll slower", "reply in Chinese"
