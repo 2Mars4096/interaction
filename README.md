@@ -124,8 +124,31 @@ interaction gaze-live --frames 24 --action cursor --execute --show-dot
 interaction gaze-live --frames 18 --action click --execute
 interaction gaze-live --frames 24 --action drag --execute
 interaction voice-live --duration 4.0 --execute
+interaction voice-live --duration 4.0 --lane dictation --execute
+interaction voice-live --duration 4.0 --lane hybrid --execute
+interaction voice-live --duration 8.0 --streaming --pause-ms 700 --lane hybrid --execute
+interaction voice-dictate --duration 10.0 --execute
 interaction fusion-live --gaze-frames 12 --duration 4.0 --confirm-duration 2.5 --execute
 ```
+
+`voice-live` now supports three lane modes:
+
+- `--lane command` keeps the bounded command interpreter
+- `--lane dictation` treats the captured utterance as text to type into the active field
+- `--lane hybrid` tries bounded commands first and falls back to dictation when the utterance does not match the command set
+
+`voice-live --streaming` now enables the first live-audio clause path. It uses macOS live speech recognition, emits partial updates, segments clauses using pause boundaries, and routes each clause through the selected lane. This is the first step toward a Typeless-style async dictation/command product shape.
+
+`voice-dictate` is a dedicated preset for that path. It defaults to streaming dictation with pause-based clause segmentation, so the Typeless-like test command is shorter and less error-prone.
+
+In dictation-oriented lanes, the current local formatter now supports:
+
+- spoken punctuation such as `comma`, `period`, `question mark`, and `new line`
+- leading filler cleanup such as `um`, `uh`, and `you know`
+- immediate duplicate-word and short false-start cleanup
+- duplicate-clause suppression for repeated streaming clause boundaries
+- spoken formatting such as `open paren`, `close paren`, and `new sentence`
+- recent-draft edits such as repeated `scratch that`, `replace that with ...`, `delete last sentence`, `replace last sentence with ...`, and self-correction cues like `i mean ...`
 
 Recommended working demo on macOS:
 
@@ -171,15 +194,15 @@ interaction gaze-live --frames 24 --action drag --execute --action-cooldown-ms 1
 
 ## Documentation Set
 
+- [docs/README.md](docs/README.md) - public docs index
 - [docs/product-spec.md](docs/product-spec.md) - product goals, scope, user, and MVP definition
 - [docs/interaction-model.md](docs/interaction-model.md) - how voice, gaze, confirmation, and feedback fit together
 - [docs/safety-model.md](docs/safety-model.md) - action risk taxonomy and broker policy
 - [docs/command-vocabulary.md](docs/command-vocabulary.md) - first bounded command set and default broker decisions
-- [docs/evaluation-plan.md](docs/evaluation-plan.md) - success metrics for latency, accuracy, accidental actions, and usability
 - [docs/mvp-readiness.md](docs/mvp-readiness.md) - tester-facing acceptance targets, setup checklist, and first-trial commands
-- [docs/development-plan.md](docs/development-plan.md) - roadmap from contracts to productization
 - [docs/architecture.md](docs/architecture.md) - intended system shape and repository conventions
-- [docs/reviews/README.md](docs/reviews/README.md) - phase-end code review gate convention
+
+Local planning, review, benchmark, and worklog material now lives under `.private-docs/`, which is intentionally ignored by git so it does not sync with the public repo.
 
 ## Repo Layout
 
@@ -187,17 +210,22 @@ interaction gaze-live --frames 24 --action drag --execute --action-cooldown-ms 1
 .
 ├── AGENT.md
 ├── docs/
+│   ├── README.md
 │   ├── architecture.md
+│   ├── command-vocabulary.md
+│   ├── interaction-model.md
+│   ├── mvp-readiness.md
+│   ├── product-spec.md
+│   └── safety-model.md
+├── .private-docs/
+│   ├── benchmark-reporting.md
 │   ├── bugs.md
 │   ├── changelog.md
 │   ├── development-plan.md
 │   ├── evaluation-plan.md
-│   ├── interaction-model.md
 │   ├── llm-api-guide.md
 │   ├── plans/
-│   ├── product-spec.md
 │   ├── reviews/
-│   ├── safety-model.md
 │   └── todo.md
 ├── src/interaction/
 │   ├── contracts/
@@ -216,4 +244,4 @@ pip install -e ".[dev]"
 pytest
 ```
 
-At this point, `pytest` verifies the end-to-end prototype slices through the completed Phase 8 live-multimodal patch. Remaining gaps are tracked in [docs/bugs.md](docs/bugs.md) and [docs/todo.md](docs/todo.md).
+At this point, `pytest` verifies the end-to-end prototype slices through the completed Phase 8 live-multimodal patch. Local-only gaps, plans, and reviews are tracked under `.private-docs/`.

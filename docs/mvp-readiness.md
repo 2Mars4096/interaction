@@ -7,6 +7,9 @@ Define when the first tester-facing macOS prototype is ready for a real user tri
 ## Current Tester Path
 
 - `interaction voice-live` or `python scripts/phase6_live_voice_smoke.py` for real microphone capture and bounded voice commands; add `--execute` to run approved live actions
+- `interaction voice-live --streaming --lane hybrid` for the first live-audio clause path that can mix commands and dictation in one run
+- `interaction voice-live --streaming --lane dictation` for streaming clause-based dictation with local punctuation formatting, filler cleanup, and recent draft/sentence correction commands
+- `interaction voice-dictate` as the shorter tester-facing preset for the streaming dictation lane
 - `interaction gaze-calibrate` or `python scripts/phase7_webcam_calibrate.py` for live webcam calibration
 - `interaction gaze-live` or `python scripts/phase7_live_webcam_smoke.py` for the live webcam gaze path; use `--action cursor|move|click|right-click|double-click|drag` for explicit gaze-only manipulation tests
 - `interaction fusion-live` or `python scripts/phase8_live_fusion_smoke.py` for the live sequential gaze-plus-voice demo; add `--execute` to run approved live pointer actions

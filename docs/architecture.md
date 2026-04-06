@@ -71,8 +71,8 @@ The first concrete code in the repository should live here, inside `src/interact
 ## Repository Layout
 
 ```text
-docs/              Planning, roadmap, and tracking memory
-docs/plans/        Active and completed implementation plans
+docs/              Public product and architecture docs
+.private-docs/     Local-only plans, reviews, benchmarks, and working notes
 src/interaction/   Python package for runtime code and contracts
 tests/             Automated tests
 ```

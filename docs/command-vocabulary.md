@@ -30,3 +30,4 @@ This document captures the Phase 1 spec-review outcome for the first bounded com
 - The first safe-key allow-list is intentionally tiny.
 - Webcam gaze precision is assumed to be coarse, so target-driven commands should prefer confirmation over aggressive auto-execution.
 - `drag_target` now exists as an explicit tester-facing gaze-control mode, but it is still outside the original first-10 showcase command list.
+- The voice product also exposes dictation-oriented lanes through `interaction voice-live --lane dictation|hybrid`; those lanes currently support conservative local cleanup and recent-clause revision, but they are still typed-text helpers rather than open-ended agent actions.
