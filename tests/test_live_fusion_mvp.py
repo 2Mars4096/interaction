@@ -5,7 +5,9 @@ from pathlib import Path
 
 from interaction.app import main
 from interaction.audio import LiveSpeechCapture, SpeechCaptureError
+from interaction.contracts import DesktopTargetCandidate, EnvironmentSnapshot, ScreenPoint, TargetCandidateSource
 from interaction.persistence import JsonStateStore, RuntimePaths
+from interaction.platform import MacOSPlatformAdapter
 from interaction.vision import CalibrationProfile, GazeSample, NormalizedPoint, WebcamProviderError
 
 
@@ -95,6 +97,56 @@ class FakeFusionSpeechErrorProvider:
             "Microphone permission was denied for the speech helper.",
             payload={"status": "error", "error": "microphone_denied"},
         )
+
+
+class FakeFusionNavigationSpeechProvider:
+    def __init__(self, _paths) -> None:
+        self.calls = 0
+
+    def capture_turn(self, *, duration_s: float = 4.0, locale: str = "en-US") -> LiveSpeechCapture:
+        self.calls += 1
+        if self.calls != 1:
+            raise AssertionError("Structured navigation should not require a confirmation turn.")
+        return LiveSpeechCapture(
+            transcript="tab 3",
+            confidence=0.93,
+            locale=locale,
+            duration_s=duration_s,
+            provider="fake",
+            used_on_device=True,
+            permission_state="granted",
+        )
+
+
+class FakeFusionCandidateAdapter(MacOSPlatformAdapter):
+    def __init__(self, *, dry_run: bool = True) -> None:
+        super().__init__(dry_run=dry_run, target_candidate_collector=self._collect)
+
+    @staticmethod
+    def _collect(query):
+        return (
+            DesktopTargetCandidate(
+                candidate_id="ax-compose",
+                source=TargetCandidateSource.ACCESSIBILITY,
+                display_label="Compose AX button",
+                label="Compose",
+                role="AXButton",
+                screen_point=ScreenPoint(x=query.screen_point.x + 12.0, y=query.screen_point.y + 18.0),
+                invocable=True,
+                available_actions=["AXPress"],
+                app_name="Finder",
+                pid=123,
+            ),
+        )
+
+
+class FakeFusionFailingCandidateAdapter(MacOSPlatformAdapter):
+    def __init__(self, *, dry_run: bool = True) -> None:
+        super().__init__(dry_run=dry_run, target_candidate_collector=self._collect)
+
+    @staticmethod
+    def _collect(_query):
+        raise RuntimeError("candidate collection failed")
 
 
 def test_fusion_live_requires_saved_calibration_profile(tmp_path: Path) -> None:
@@ -188,6 +240,117 @@ def test_fusion_live_runs_confirmation_required_flow(monkeypatch, tmp_path: Path
     assert any(
         event["result"]
         and event["result"]["details"]["commands"][0][2] == "interaction.platform.macos_runtime"
+        and event["result"]["details"]["commands"][0][3] == "double-click-normalized"
+        for event in payload["events"]
+    )
+
+
+def test_fusion_live_uses_frontmost_environment_for_structured_navigation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionGazeProvider)
+    monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", FakeFusionNavigationSpeechProvider)
+    monkeypatch.setattr(
+        "interaction.app.capture_frontmost_environment",
+        lambda: EnvironmentSnapshot(
+            active_app="Google Chrome",
+            active_bundle_id="com.google.Chrome",
+            active_window_title="Docs",
+        ),
+    )
+    store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
+    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        exit_code = main(
+            [
+                "fusion-live",
+                "--runtime-dir",
+                str(tmp_path / ".interaction"),
+                "--gaze-frames",
+                "6",
+                "--duration",
+                "1.0",
+            ]
+        )
+    payload = json.loads(stdout.getvalue())
+
+    assert exit_code == 0
+    assert payload["environment"]["active_bundle_id"] == "com.google.Chrome"
+    assert payload["confirmation_capture"] is None
+    assert any(
+        event["result"]
+        and event["result"]["details"]["navigation"]["scope"] == "tab"
+        and event["result"]["details"]["profile_id"] == "chrome_chromium_family"
+        for event in payload["events"]
+    )
+
+
+def test_fusion_live_prefers_explicit_candidate_screen_point_when_collected(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionGazeProvider)
+    monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", FakeFusionSpeechProvider)
+    monkeypatch.setattr("interaction.app.MacOSPlatformAdapter", FakeFusionCandidateAdapter)
+    store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
+    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        exit_code = main(
+            [
+                "fusion-live",
+                "--runtime-dir",
+                str(tmp_path / ".interaction"),
+                "--gaze-frames",
+                "6",
+                "--duration",
+                "1.0",
+                "--confirm-duration",
+                "0.5",
+            ]
+        )
+    payload = json.loads(stdout.getvalue())
+
+    assert exit_code == 0
+    assert payload["live_gaze_context"]["status"] == "success"
+    assert payload["live_gaze_context"]["explicit_candidate_count"] == 1
+    assert payload["live_gaze_context"]["selected_target"]["target_id"] == "ax-compose"
+    assert payload["live_gaze_context"]["candidate_targets"][0]["screen_point"] is not None
+    assert any(
+        event["result"]
+        and event["result"]["details"]["commands"][0][3] == "double-click"
+        for event in payload["events"]
+    )
+
+
+def test_fusion_live_falls_back_when_candidate_collection_fails(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionGazeProvider)
+    monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", FakeFusionSpeechProvider)
+    monkeypatch.setattr("interaction.app.MacOSPlatformAdapter", FakeFusionFailingCandidateAdapter)
+    store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
+    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        exit_code = main(
+            [
+                "fusion-live",
+                "--runtime-dir",
+                str(tmp_path / ".interaction"),
+                "--gaze-frames",
+                "6",
+                "--duration",
+                "1.0",
+                "--confirm-duration",
+                "0.5",
+            ]
+        )
+    payload = json.loads(stdout.getvalue())
+
+    assert exit_code == 0
+    assert payload["live_gaze_context"]["status"] == "success"
+    assert payload["live_gaze_context"]["explicit_candidate_count"] == 0
+    assert payload["live_gaze_context"]["candidate_targets"] == []
+    assert any(
+        event["result"]
         and event["result"]["details"]["commands"][0][3] == "double-click-normalized"
         for event in payload["events"]
     )

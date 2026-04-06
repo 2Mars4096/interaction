@@ -1,4 +1,5 @@
 """Manual wrapper for the Phase 7 webcam calibration flow."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 

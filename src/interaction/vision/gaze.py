@@ -50,50 +50,81 @@ class NormalizedScreenTarget:
 
 
 class GazeSmoother:
-    """Simple moving-average smoother for normalized gaze points."""
+    """Confidence-weighted smoother for normalized gaze points."""
 
     def __init__(self, window_size: int = 4) -> None:
-        self.window: deque[NormalizedPoint] = deque(maxlen=window_size)
+        self.window_size = window_size
+        self.window: deque[GazeSample] = deque(maxlen=window_size)
 
     def smooth(self, sample: GazeSample) -> GazeObservation:
-        self.window.append(sample.point)
-        x = sum(point.x for point in self.window) / len(self.window)
-        y = sum(point.y for point in self.window) / len(self.window)
+        self.window.append(sample)
+        weights = [max(0.05, min(1.0, item.confidence)) for item in self.window]
+        total_weight = sum(weights)
+        if total_weight <= 0.0:
+            total_weight = float(len(self.window))
+            weights = [1.0] * len(self.window)
+        x = sum(item.point.x * weight for item, weight in zip(self.window, weights)) / total_weight
+        y = sum(item.point.y * weight for item, weight in zip(self.window, weights)) / total_weight
+        confidence = sum(max(0.0, min(1.0, item.confidence)) for item in self.window) / len(self.window)
         return GazeObservation(
-            confidence=sample.confidence,
+            confidence=confidence,
             x_norm=x,
             y_norm=y,
             fixation_ms=sample.delta_ms,
         )
 
+    def reset(self) -> None:
+        self.window = deque(maxlen=self.window_size)
+
 
 class GazeTargetInferencer:
     """Infer the most likely large target under the current gaze point."""
 
-    def __init__(self, *, min_width: float = 0.08, min_height: float = 0.05) -> None:
+    AREA_WEIGHT = 0.22
+
+    def __init__(
+        self,
+        *,
+        min_width: float = 0.08,
+        min_height: float = 0.05,
+        fallback_to_nearest: bool = False,
+    ) -> None:
         self.min_width = min_width
         self.min_height = min_height
+        self.fallback_to_nearest = fallback_to_nearest
 
     def infer(self, observation: GazeObservation, targets: list[NormalizedScreenTarget]) -> GroundedTarget | None:
         if observation.x_norm is None or observation.y_norm is None:
             return None
         point = NormalizedPoint(observation.x_norm, observation.y_norm)
-        candidates = [
+        large_targets = [
             target
             for target in targets
-            if target.width >= self.min_width and target.height >= self.min_height and target.contains(point)
+            if target.width >= self.min_width and target.height >= self.min_height
         ]
-        if not candidates:
+        if not large_targets:
             return None
+        containing_targets = [
+            target
+            for target in large_targets
+            if target.contains(point)
+        ]
+        candidates = containing_targets
+        if not candidates:
+            if not self.fallback_to_nearest:
+                return None
+            candidates = large_targets
 
         def score(target: NormalizedScreenTarget) -> float:
             center = target.center()
             distance = math.dist((point.x, point.y), (center.x, center.y))
-            area_bonus = target.width * target.height
+            area_bonus = math.sqrt(max(0.0, target.width * target.height)) * self.AREA_WEIGHT
             return area_bonus - distance
 
         best = max(candidates, key=score)
-        confidence = min(1.0, observation.confidence * 0.6 + 0.4)
+        confidence = max(0.0, min(1.0, observation.confidence))
+        if not containing_targets and self.fallback_to_nearest:
+            confidence = min(confidence, observation.confidence * 0.75)
         return best.to_grounded_target(confidence=confidence)
 
 
@@ -107,13 +138,20 @@ class DwellTrigger:
         min_confidence: float = 0.65,
         action: ActionName = ActionName.HIGHLIGHT_TARGET,
         cooldown_ms: int = 900,
+        switch_grace_ms: int = 150,
+        switch_decay: float = 0.35,
     ) -> None:
         self.dwell_ms = dwell_ms
         self.min_confidence = min_confidence
         self.action = action
         self.cooldown_ms = max(0, cooldown_ms)
+        self.switch_grace_ms = max(0, switch_grace_ms)
+        self.switch_decay = max(0.0, min(1.0, switch_decay))
         self.current_target_id: str | None = None
         self.accumulated_ms = 0
+        self.previous_target_id: str | None = None
+        self.previous_accumulated_ms = 0
+        self.previous_target_grace_ms = 0
         self.triggered_target_id: str | None = None
         self.cooldown_remaining_ms = 0
 
@@ -121,10 +159,18 @@ class DwellTrigger:
         self.cooldown_remaining_ms = self.cooldown_ms
         self.current_target_id = None
         self.accumulated_ms = 0
+        self.previous_target_id = None
+        self.previous_accumulated_ms = 0
+        self.previous_target_grace_ms = 0
         self.triggered_target_id = None
 
     def update(self, observation: GazeObservation, target: GroundedTarget | None) -> ActionProposal | None:
         delta_ms = observation.fixation_ms or 0
+        if self.previous_target_grace_ms > 0:
+            self.previous_target_grace_ms = max(0, self.previous_target_grace_ms - delta_ms)
+            if self.previous_target_grace_ms == 0:
+                self.previous_target_id = None
+                self.previous_accumulated_ms = 0
         if self.cooldown_remaining_ms > 0:
             self.cooldown_remaining_ms = max(0, self.cooldown_remaining_ms - delta_ms)
             self.current_target_id = None
@@ -140,8 +186,19 @@ class DwellTrigger:
         if target.target_id == self.current_target_id:
             self.accumulated_ms += delta_ms
         else:
+            preserved_ms = 0
+            if (
+                self.previous_target_id == target.target_id
+                and self.previous_target_grace_ms > 0
+                and delta_ms <= self.switch_grace_ms
+            ):
+                preserved_ms = int(self.previous_accumulated_ms * self.switch_decay)
+            if self.current_target_id is not None:
+                self.previous_target_id = self.current_target_id
+                self.previous_accumulated_ms = self.accumulated_ms
+                self.previous_target_grace_ms = self.switch_grace_ms
             self.current_target_id = target.target_id
-            self.accumulated_ms = delta_ms
+            self.accumulated_ms = delta_ms + min(max(0, self.dwell_ms - delta_ms), preserved_ms)
             self.triggered_target_id = None
 
         if self.accumulated_ms >= self.dwell_ms and self.triggered_target_id != target.target_id:

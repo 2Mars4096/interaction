@@ -1,4 +1,5 @@
 """Manual smoke harness for the Phase 1 broker and macOS adapter."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 

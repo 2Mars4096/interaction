@@ -24,11 +24,37 @@ class VoiceDirective:
     intent: NormalizedIntent | None = None
     proposal: ActionProposal | None = None
     message: str | None = None
+    source: str | None = None
+
+
+def normalize_utterance(utterance: str) -> str:
+    return " ".join(utterance.strip().split())
+
+
+def match_review_token(
+    utterance: str,
+    *,
+    pending_confirmation: bool,
+    allow_without_pending: bool = True,
+) -> VoiceDirective | None:
+    lowered = normalize_utterance(utterance).lower()
+    if not lowered:
+        return None
+    if lowered in VoiceIntentInterpreter._CONFIRM_TOKENS:
+        if pending_confirmation or allow_without_pending:
+            return VoiceDirective(kind=VoiceDirectiveType.CONFIRM, utterance=normalize_utterance(utterance), source="regex")
+        return None
+    if lowered in VoiceIntentInterpreter._CANCEL_TOKENS:
+        if pending_confirmation or allow_without_pending:
+            return VoiceDirective(kind=VoiceDirectiveType.CANCEL, utterance=normalize_utterance(utterance), source="regex")
+        return None
+    return None
 
 
 class VoiceIntentInterpreter:
     """Interpret typed or transcribed speech into bounded actions."""
 
+    _DEICTIC_TOKENS = {"this", "that", "here", "there"}
     _COMMAND_PATTERNS = (
         (re.compile(r"^(?:open|launch)\s+(.+)$", re.IGNORECASE), "open_app"),
         (re.compile(r"^(?:switch to|go to)\s+(.+)$", re.IGNORECASE), "switch_app"),
@@ -43,18 +69,17 @@ class VoiceIntentInterpreter:
     _CANCEL_TOKENS = {"no", "cancel", "stop", "never mind", "abort", "nope"}
 
     def interpret(self, utterance: str) -> VoiceDirective:
-        text = " ".join(utterance.strip().split())
-        lowered = text.lower()
+        text = normalize_utterance(utterance)
         if not text:
             return VoiceDirective(
                 kind=VoiceDirectiveType.CLARIFY,
                 utterance=text,
                 message="I did not hear a command.",
+                source="regex",
             )
-        if lowered in self._CONFIRM_TOKENS:
-            return VoiceDirective(kind=VoiceDirectiveType.CONFIRM, utterance=text)
-        if lowered in self._CANCEL_TOKENS:
-            return VoiceDirective(kind=VoiceDirectiveType.CANCEL, utterance=text)
+        review_token = match_review_token(text, pending_confirmation=True)
+        if review_token is not None:
+            return review_token
 
         for pattern, command in self._COMMAND_PATTERNS:
             match = pattern.match(text)
@@ -65,6 +90,7 @@ class VoiceIntentInterpreter:
                     kind=VoiceDirectiveType.CLARIFY,
                     utterance=text,
                     message="That command needs gaze grounding before I can act on it.",
+                    source="regex",
                 )
             return self._proposal_from_match(command, text, match.groups())
 
@@ -72,11 +98,19 @@ class VoiceIntentInterpreter:
             kind=VoiceDirectiveType.REJECT,
             utterance=text,
             message="I could not map that request to the current bounded voice command set.",
+            source="regex",
         )
 
     def _proposal_from_match(self, command: str, utterance: str, groups: tuple[str | None, ...]) -> VoiceDirective:
         if command == "open_app":
             app_name = groups[0].strip()
+            if app_name.lower() in self._DEICTIC_TOKENS:
+                return VoiceDirective(
+                    kind=VoiceDirectiveType.CLARIFY,
+                    utterance=utterance,
+                    message="That command needs gaze grounding before I can act on it.",
+                    source="regex",
+                )
             return self._proposal(
                 utterance=utterance,
                 intent_name="open_app",
@@ -87,6 +121,13 @@ class VoiceIntentInterpreter:
             )
         if command == "switch_app":
             app_name = groups[0].strip()
+            if app_name.lower() in self._DEICTIC_TOKENS:
+                return VoiceDirective(
+                    kind=VoiceDirectiveType.CLARIFY,
+                    utterance=utterance,
+                    message="That command needs gaze grounding before I can act on it.",
+                    source="regex",
+                )
             return self._proposal(
                 utterance=utterance,
                 intent_name="switch_app",
@@ -176,4 +217,5 @@ class VoiceIntentInterpreter:
             utterance=utterance,
             intent=intent,
             proposal=proposal,
+            source="regex",
         )

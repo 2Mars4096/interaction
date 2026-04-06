@@ -8,7 +8,9 @@ from interaction.contracts import ActionName, ActionProposal, BrokerDecisionType
 from interaction.control import CommandBroker
 from interaction.feedback import GazeFeedbackEvent, GazeLoopPhase
 from interaction.platform import MacOSPlatformAdapter, PlatformAdapter
-from interaction.vision import CalibrationProfile, CalibrationSample, DwellTrigger, GazeSample, GazeSmoother, GazeTargetInferencer, NormalizedScreenTarget
+from interaction.vision import CalibrationProfile, CalibrationSample, DwellTrigger, GazeSample, GazeSmoother, GazeTargetInferencer, NormalizedPoint, NormalizedScreenTarget
+
+from .cursor_controllers import OnlineBiasCorrector
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class GazeTrackingLoop:
         dwell_trigger: DwellTrigger | None = None,
         auto_confirm_actions: set[ActionName] | None = None,
         drag_timeout_ms: int = 3000,
+        enable_bias_correction: bool = False,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
@@ -41,6 +44,18 @@ class GazeTrackingLoop:
         self.calibration_profile = CalibrationProfile()
         self.pending_drag_origin: DragOrigin | None = None
         self.pending_drag_elapsed_ms = 0
+        self.enable_bias_correction = enable_bias_correction
+        self.online_bias_corrector = OnlineBiasCorrector()
+        self.bias_update_events = 0
+        self._bias_target_id: str | None = None
+        self._bias_target_elapsed_ms = 0
+
+    def set_bias_correction_enabled(self, enabled: bool) -> None:
+        self.enable_bias_correction = bool(enabled)
+        if not self.enable_bias_correction:
+            self.online_bias_corrector.reset()
+            self._bias_target_id = None
+            self._bias_target_elapsed_ms = 0
 
     def calibrate(self, samples: list[CalibrationSample]) -> list[GazeFeedbackEvent]:
         self.calibration_profile = CalibrationProfile.fit(samples)
@@ -86,14 +101,20 @@ class GazeTrackingLoop:
                     )
                 )
         calibrated_point = self.calibration_profile.apply(sample.point)
+        corrected_point = (
+            self.online_bias_corrector.apply((calibrated_point.x, calibrated_point.y), edge_padding=0.0)
+            if self.enable_bias_correction
+            else (calibrated_point.x, calibrated_point.y)
+        )
         observation = self.smoother.smooth(
             GazeSample(
-                point=calibrated_point,
+                point=NormalizedPoint(*corrected_point),
                 confidence=sample.confidence,
                 delta_ms=sample.delta_ms,
             )
         )
         target = self.inferencer.infer(observation, targets)
+        self._maybe_update_bias_correction(calibrated_point, sample_delta_ms=sample.delta_ms, target=target)
         if target is None:
             events.append(
                 GazeFeedbackEvent(
@@ -151,6 +172,41 @@ class GazeTrackingLoop:
             )
         )
         return events
+
+    def _maybe_update_bias_correction(
+        self,
+        calibrated_point: NormalizedPoint,
+        *,
+        sample_delta_ms: int,
+        target: GroundedTarget | None,
+    ) -> None:
+        if (
+            not self.enable_bias_correction
+            or target is None
+            or target.bounds is None
+            or target.confidence < self.dwell_trigger.min_confidence
+        ):
+            self._bias_target_id = None
+            self._bias_target_elapsed_ms = 0
+            return
+        if target.target_id == self._bias_target_id:
+            self._bias_target_elapsed_ms += max(0, sample_delta_ms)
+        else:
+            self._bias_target_id = target.target_id
+            self._bias_target_elapsed_ms = max(0, sample_delta_ms)
+        bias_updated = self.online_bias_corrector.maybe_update(
+            (float(calibrated_point.x), float(calibrated_point.y)),
+            reference_point=(
+                float(target.bounds.x) + float(target.bounds.width) / 2.0,
+                float(target.bounds.y) + float(target.bounds.height) / 2.0,
+            ),
+            stable_ms=self._bias_target_elapsed_ms,
+            sample_delta_ms=max(0, sample_delta_ms),
+            learn_window_x=max(float(target.bounds.width) * 0.45, 0.02),
+            learn_window_y=max(float(target.bounds.height) * 0.45, 0.02),
+        )
+        if bias_updated:
+            self.bias_update_events += 1
 
     def _handle_drag_stage(
         self,

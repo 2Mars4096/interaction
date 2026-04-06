@@ -1,4 +1,5 @@
 """Manual smoke wrapper for the Phase 7 live webcam gaze path."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 

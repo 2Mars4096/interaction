@@ -1,4 +1,5 @@
 """Manual smoke harness for the Phase 4 multimodal fusion loop."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 

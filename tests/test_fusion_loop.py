@@ -1,4 +1,4 @@
-from interaction.contracts import EnvironmentSnapshot, GazeObservation
+from interaction.contracts import DesktopTargetCandidate, EnvironmentSnapshot, GazeObservation, GroundedTarget, ScreenPoint, TargetCandidateSource
 from interaction.feedback import FusionLoopPhase
 from interaction.platform import MacOSPlatformAdapter
 from interaction.runtime import MultimodalFusionLoop, SharedInteractionState
@@ -15,6 +15,29 @@ def _compose_target(confidence: float = 0.9):
         width=0.22,
         height=0.12,
     ).to_grounded_target(confidence=confidence)
+
+
+def _compose_explicit_candidate_target() -> GroundedTarget:
+    candidate = DesktopTargetCandidate(
+        candidate_id="ax-compose",
+        source=TargetCandidateSource.ACCESSIBILITY,
+        display_label="Compose AX button",
+        label="Compose",
+        role="AXButton",
+        screen_point=ScreenPoint(x=640.0, y=320.0),
+        invocable=True,
+        available_actions=["AXPress"],
+        app_name="Mail",
+        pid=123,
+    )
+    return GroundedTarget(
+        target_id=candidate.candidate_id,
+        label="Compose AX button",
+        role="AXButton",
+        confidence=0.92,
+        source=TargetCandidateSource.ACCESSIBILITY,
+        candidate=candidate,
+    )
 
 
 def test_shared_state_expires_stale_target() -> None:
@@ -51,6 +74,28 @@ def test_fusion_loop_confirm_yes_executes_normalized_pointer_action() -> None:
         event.result
         and event.result.details["commands"][0][2] == "interaction.platform.macos_runtime"
         and event.result.details["commands"][0][3] == "double-click-normalized"
+        for event in events
+    )
+
+
+def test_fusion_loop_prefers_explicit_candidate_screen_point_when_present() -> None:
+    loop = MultimodalFusionLoop(adapter=MacOSPlatformAdapter(dry_run=True))
+    target = _compose_target()
+    explicit_candidate = _compose_explicit_candidate_target()
+    loop.update_gaze_context(
+        GazeObservation(confidence=0.88, x_norm=0.56, y_norm=0.20, fixation_ms=250),
+        target,
+        candidate_targets=[explicit_candidate],
+    )
+
+    loop.run_voice_turn("open this", EnvironmentSnapshot(active_app="Mail"))
+    events = loop.run_voice_turn("yes", EnvironmentSnapshot(active_app="Mail"))
+
+    assert any(event.result and event.result.status.value == "success" for event in events)
+    assert any(
+        event.result
+        and event.result.details["commands"][0][3] == "double-click"
+        and event.result.details["commands"][0][4:6] == ["640.0", "320.0"]
         for event in events
     )
 
@@ -97,6 +142,22 @@ def test_fusion_loop_clarifies_when_grounding_confidence_is_too_low() -> None:
     assert all(event.result is None for event in events)
 
 
+def test_shared_state_candidate_targets_prefer_fresh_explicit_candidates() -> None:
+    state = SharedInteractionState(gaze_context_window_ms=500)
+    target = _compose_target()
+    explicit_candidate = _compose_explicit_candidate_target()
+    state.record_gaze(
+        GazeObservation(confidence=0.9, x_norm=0.56, y_norm=0.20, fixation_ms=200),
+        target,
+        candidate_targets=[explicit_candidate],
+    )
+
+    candidates = state.candidate_targets(limit=2)
+
+    assert candidates[0].target_id == "ax-compose"
+    assert state.latest_target().target_id == "ax-compose"
+
+
 def test_fusion_metrics_record_execution_and_confirmation() -> None:
     loop = MultimodalFusionLoop(adapter=MacOSPlatformAdapter(dry_run=True))
     target = _compose_target()
@@ -109,3 +170,19 @@ def test_fusion_metrics_record_execution_and_confirmation() -> None:
     assert metrics["total_turns"] == 2
     assert metrics["confirmations"] >= 1
     assert metrics["executions"] >= 1
+
+
+def test_fusion_loop_structured_navigation_follow_up_reuses_active_scope() -> None:
+    loop = MultimodalFusionLoop(adapter=MacOSPlatformAdapter(dry_run=True))
+    environment = EnvironmentSnapshot(active_app="Google Chrome", active_bundle_id="com.google.Chrome")
+
+    first_events = loop.run_voice_turn("tab 3", environment)
+    second_events = loop.run_voice_turn("next", environment)
+
+    assert any(event.result and event.result.details["navigation"]["index"] == 3 for event in first_events)
+    assert any(
+        event.result
+        and event.result.details["navigation"]["scope"] == "tab"
+        and event.result.details["navigation"]["command"] == "next"
+        for event in second_events
+    )

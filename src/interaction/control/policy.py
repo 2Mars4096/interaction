@@ -17,6 +17,10 @@ class BrokerPolicy:
             return BrokerDecisionType.REJECT
         if risk == RiskLevel.L3:
             return BrokerDecisionType.REJECT
+        if action == ActionName.NAVIGATE_STRUCTURE:
+            if arguments.get("profile_supported") is False:
+                return BrokerDecisionType.REJECT
+            return BrokerDecisionType.ALLOW if risk in {RiskLevel.L0, RiskLevel.L1} else BrokerDecisionType.CONFIRM
         if action in {
             ActionName.CLICK_TARGET,
             ActionName.DOUBLE_CLICK_TARGET,

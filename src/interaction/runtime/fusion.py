@@ -5,11 +5,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from interaction.audio import ScriptedTranscriber
-from interaction.contracts import BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget
+from interaction.contracts import (
+    ActionName,
+    BrokerDecisionType,
+    EnvironmentSnapshot,
+    ExecutionStatus,
+    GazeObservation,
+    GroundedTarget,
+    NavigationScope,
+    SessionMode,
+)
 from interaction.control import CommandBroker
 from interaction.feedback import FusionFeedbackEvent, FusionLoopPhase
-from interaction.intent import FusionIntentResolver, VoiceDirectiveType, VoiceIntentInterpreter
-from interaction.platform import MacOSPlatformAdapter, PlatformAdapter
+from interaction.intent import (
+    FusionIntentResolver,
+    FusionResolution,
+    InterpreterStrategy,
+    TranscriptHistoryItem,
+    VoiceDirectiveType,
+    VoiceInterpretationContext,
+    VoiceInterpretationRouter,
+)
+from interaction.platform.base import PlatformAdapter
+from interaction.platform.macos import MacOSPlatformAdapter
 
 from .state import SharedInteractionState
 
@@ -42,7 +60,7 @@ class MultimodalFusionLoop:
         *,
         broker: CommandBroker | None = None,
         adapter: PlatformAdapter | None = None,
-        voice_interpreter: VoiceIntentInterpreter | None = None,
+        router: VoiceInterpretationRouter | None = None,
         fusion_resolver: FusionIntentResolver | None = None,
         transcriber: ScriptedTranscriber | None = None,
         state: SharedInteractionState | None = None,
@@ -50,20 +68,27 @@ class MultimodalFusionLoop:
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
-        self.voice_interpreter = voice_interpreter or VoiceIntentInterpreter()
+        self.router = router or VoiceInterpretationRouter(strategy=InterpreterStrategy.HYBRID)
         self.fusion_resolver = fusion_resolver or FusionIntentResolver()
         self.transcriber = transcriber or ScriptedTranscriber()
         self.state = state or SharedInteractionState()
         self.metrics = metrics or FusionMetrics()
         self.pending_decision = None
 
-    def update_gaze_context(self, observation: GazeObservation, target: GroundedTarget | None) -> FusionFeedbackEvent:
-        self.state.record_gaze(observation, target)
-        message = f'Updated gaze context with "{target.label}".' if target else "No grounded target was recorded."
+    def update_gaze_context(
+        self,
+        observation: GazeObservation,
+        target: GroundedTarget | None,
+        *,
+        candidate_targets: list[GroundedTarget] | None = None,
+    ) -> FusionFeedbackEvent:
+        self.state.record_gaze(observation, target, candidate_targets=candidate_targets)
+        primary_target = candidate_targets[0] if candidate_targets else target
+        message = f'Updated gaze context with "{primary_target.label}".' if primary_target else "No grounded target was recorded."
         return FusionFeedbackEvent(
             phase=FusionLoopPhase.TRACKING,
             message=message,
-            target=target,
+            target=primary_target,
         )
 
     def run_voice_turn(
@@ -74,6 +99,7 @@ class MultimodalFusionLoop:
         final_confidence: float | None = 1.0,
     ) -> list[FusionFeedbackEvent]:
         self.metrics.total_turns += 1
+        self.state.record_environment(environment)
         events: list[FusionFeedbackEvent] = []
         for segment in self.transcriber.stream(utterance, final_confidence=final_confidence):
             if not segment.is_final:
@@ -102,8 +128,9 @@ class MultimodalFusionLoop:
                 target=latest_target,
             )
         ]
+        self.state.record_environment(environment)
         self.state.record_transcript(text, confidence=transcript_confidence)
-        directive = self.voice_interpreter.interpret(text)
+        directive = self.router.interpret(text, self._interpretation_context(environment))
 
         if directive.kind == VoiceDirectiveType.CONFIRM:
             if self.pending_decision is None:
@@ -119,6 +146,7 @@ class MultimodalFusionLoop:
         if directive.kind == VoiceDirectiveType.CANCEL:
             if self.pending_decision is not None:
                 self.pending_decision = None
+                self.state.clear_active_scope()
                 self.metrics.cancellations += 1
                 events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="Pending fused action cancelled.", transcript=text))
             else:
@@ -127,49 +155,13 @@ class MultimodalFusionLoop:
             events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
             return events
 
-        fused_confidence = self._fused_confidence(
-            transcript_confidence=transcript_confidence,
-            latest_gaze_confidence=self.state.latest_gaze_confidence(),
-            latest_target=latest_target,
-        )
-        latest_observation = self.state.latest_observation() if self.state.latest_target_is_fresh() else None
-        fusion = self.fusion_resolver.resolve(
-            text,
-            latest_target if self.state.latest_target_is_fresh() else None,
-            observation=latest_observation,
-            fused_confidence=fused_confidence,
-            stale_reason=self.state.stale_reason(),
-            candidate_targets=self.state.candidate_targets(limit=3),
-        )
+        if directive.kind == VoiceDirectiveType.PROPOSAL and directive.proposal is not None:
+            events.extend(self._handle_decision(directive.proposal, environment, transcript=text, target=latest_target))
+            return events
+
+        fusion = self._resolve_fusion_fallback(text, transcript_confidence=transcript_confidence)
         if fusion.proposal is not None:
-            decision = self.broker.decide(fusion.proposal)
-            if decision.decision == BrokerDecisionType.ALLOW:
-                events.extend(self._execute_allow_decision(decision, environment))
-            elif decision.decision == BrokerDecisionType.CONFIRM:
-                self.pending_decision = decision
-                self.metrics.confirmations += 1
-                events.append(
-                    FusionFeedbackEvent(
-                        phase=FusionLoopPhase.CONFIRMING,
-                        message=decision.confirmation_prompt or "Confirm this fused action?",
-                        transcript=text,
-                        target=latest_target,
-                        decision=decision,
-                    )
-                )
-            else:
-                self.metrics.clarifications += 1
-                events.append(
-                    FusionFeedbackEvent(
-                        phase=FusionLoopPhase.RECOVERING,
-                        message=decision.reason,
-                        transcript=text,
-                        target=latest_target,
-                        decision=decision,
-                    )
-                )
-            if decision.decision != BrokerDecisionType.CONFIRM:
-                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
+            events.extend(self._handle_decision(fusion.proposal, environment, transcript=text, target=latest_target))
             return events
 
         if fusion.clarification is not None:
@@ -185,31 +177,87 @@ class MultimodalFusionLoop:
             events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
             return events
 
-        if directive.kind == VoiceDirectiveType.PROPOSAL and directive.proposal is not None:
-            # Fall back to the voice-only path for non-deictic commands.
-            decision = self.broker.decide(directive.proposal)
-            if decision.decision == BrokerDecisionType.ALLOW:
-                events.extend(self._execute_allow_decision(decision, environment))
-            elif decision.decision == BrokerDecisionType.CONFIRM:
-                self.pending_decision = decision
-                self.metrics.confirmations += 1
-                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.CONFIRMING, message=decision.confirmation_prompt or "Confirm this action?", transcript=text, decision=decision))
-            else:
-                self.metrics.recoveries += 1
-                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=decision.reason, transcript=text, decision=decision))
-            if decision.decision != BrokerDecisionType.CONFIRM:
-                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
-            return events
-
         self.metrics.recoveries += 1
         events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=directive.message or "The fused command could not be resolved.", transcript=text))
         events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
         return events
 
+    def _interpretation_context(self, environment: EnvironmentSnapshot) -> VoiceInterpretationContext:
+        return VoiceInterpretationContext(
+            mode=SessionMode.COMMAND,
+            environment=environment,
+            active_scope=self.state.active_scope(),
+            transcript_history=tuple(
+                TranscriptHistoryItem(utterance=entry.utterance, confidence=entry.confidence)
+                for entry in self.state.recent_transcripts(limit=4)
+            ),
+            latest_target=self.state.latest_target() if self.state.latest_target_is_fresh() else None,
+            candidate_targets=tuple(self.state.candidate_targets(limit=3)),
+            latest_observation=self.state.latest_observation() if self.state.latest_target_is_fresh() else None,
+            pending_confirmation=self.pending_decision is not None,
+        )
+
+    def _resolve_fusion_fallback(
+        self,
+        text: str,
+        *,
+        transcript_confidence: float | None,
+    ) -> FusionResolution:
+        latest_target = self.state.latest_target()
+        return self.fusion_resolver.resolve(
+            text,
+            latest_target if self.state.latest_target_is_fresh() else None,
+            observation=self.state.latest_observation() if self.state.latest_target_is_fresh() else None,
+            fused_confidence=self._fused_confidence(
+                transcript_confidence=transcript_confidence,
+                latest_gaze_confidence=self.state.latest_gaze_confidence(),
+                latest_target=latest_target,
+            ),
+            stale_reason=self.state.stale_reason(),
+            candidate_targets=self.state.candidate_targets(limit=3),
+        )
+
+    def _handle_decision(
+        self,
+        proposal,
+        environment: EnvironmentSnapshot,
+        *,
+        transcript: str,
+        target: GroundedTarget | None,
+    ) -> list[FusionFeedbackEvent]:
+        decision = self.broker.decide(proposal)
+        if decision.decision == BrokerDecisionType.ALLOW:
+            return self._execute_allow_decision(decision, environment)
+        if decision.decision == BrokerDecisionType.CONFIRM:
+            self.pending_decision = decision
+            self.metrics.confirmations += 1
+            return [
+                FusionFeedbackEvent(
+                    phase=FusionLoopPhase.CONFIRMING,
+                    message=decision.confirmation_prompt or "Confirm this fused action?",
+                    transcript=transcript,
+                    target=target,
+                    decision=decision,
+                )
+            ]
+        self.metrics.clarifications += 1
+        return [
+            FusionFeedbackEvent(
+                phase=FusionLoopPhase.RECOVERING,
+                message=decision.reason,
+                transcript=transcript,
+                target=target,
+                decision=decision,
+            ),
+            FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."),
+        ]
+
     def _execute_allow_decision(self, decision, environment: EnvironmentSnapshot) -> list[FusionFeedbackEvent]:
         self.metrics.executions += 1
         request = self.broker.build_execution_request(decision, environment)
         result = self.adapter.execute(request)
+        if result.status == ExecutionStatus.SUCCESS:
+            self._remember_successful_action(decision.proposal)
         return [
             FusionFeedbackEvent(
                 phase=FusionLoopPhase.EXECUTING,
@@ -226,6 +274,17 @@ class MultimodalFusionLoop:
             ),
             FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."),
         ]
+
+    def _remember_successful_action(self, proposal) -> None:
+        if proposal is None or proposal.action != ActionName.NAVIGATE_STRUCTURE:
+            return
+        scope_value = proposal.arguments.get("scope")
+        if not isinstance(scope_value, str):
+            return
+        try:
+            self.state.set_active_scope(NavigationScope(scope_value))
+        except ValueError:
+            return
 
     def _fused_confidence(
         self,

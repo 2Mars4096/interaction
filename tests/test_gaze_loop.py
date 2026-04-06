@@ -43,6 +43,47 @@ def test_calibration_profile_supports_axis_inversion() -> None:
     assert adjusted.x == pytest.approx(0.8)
 
 
+def test_calibration_profile_can_fit_piecewise_vertical_curve() -> None:
+    profile = CalibrationProfile.fit(
+        [
+            CalibrationSample(raw=NormalizedPoint(0.18, 0.24), expected=NormalizedPoint(0.2, 0.2)),
+            CalibrationSample(raw=NormalizedPoint(0.50, 0.25), expected=NormalizedPoint(0.5, 0.2)),
+            CalibrationSample(raw=NormalizedPoint(0.82, 0.24), expected=NormalizedPoint(0.8, 0.2)),
+            CalibrationSample(raw=NormalizedPoint(0.18, 0.43), expected=NormalizedPoint(0.2, 0.5)),
+            CalibrationSample(raw=NormalizedPoint(0.50, 0.44), expected=NormalizedPoint(0.5, 0.5)),
+            CalibrationSample(raw=NormalizedPoint(0.82, 0.43), expected=NormalizedPoint(0.8, 0.5)),
+            CalibrationSample(raw=NormalizedPoint(0.18, 0.59), expected=NormalizedPoint(0.2, 0.8)),
+            CalibrationSample(raw=NormalizedPoint(0.50, 0.60), expected=NormalizedPoint(0.5, 0.8)),
+            CalibrationSample(raw=NormalizedPoint(0.82, 0.59), expected=NormalizedPoint(0.8, 0.8)),
+        ]
+    )
+
+    adjusted = profile.apply(NormalizedPoint(0.50, 0.44))
+
+    assert profile.fit_mode == "piecewise_axis"
+    assert adjusted.x == pytest.approx(0.5, abs=0.03)
+    assert adjusted.y == pytest.approx(0.5, abs=0.03)
+
+
+def test_calibration_profile_falls_back_to_linear_when_vertical_order_is_not_monotonic() -> None:
+    profile = CalibrationProfile.fit(
+        [
+            CalibrationSample(raw=NormalizedPoint(0.12, 0.724), expected=NormalizedPoint(0.18, 0.15)),
+            CalibrationSample(raw=NormalizedPoint(0.13, 0.739), expected=NormalizedPoint(0.18, 0.18)),
+            CalibrationSample(raw=NormalizedPoint(0.36, 0.880), expected=NormalizedPoint(0.5, 0.17)),
+            CalibrationSample(raw=NormalizedPoint(0.40, 0.881), expected=NormalizedPoint(0.5, 0.48)),
+            CalibrationSample(raw=NormalizedPoint(0.41, 0.893), expected=NormalizedPoint(0.5, 0.80)),
+            CalibrationSample(raw=NormalizedPoint(0.53, 0.894), expected=NormalizedPoint(0.82, 0.84)),
+            CalibrationSample(raw=NormalizedPoint(0.58, 0.896), expected=NormalizedPoint(0.82, 0.85)),
+            CalibrationSample(raw=NormalizedPoint(0.62, 0.8962), expected=NormalizedPoint(0.82, 0.50)),
+            CalibrationSample(raw=NormalizedPoint(0.63, 0.8984), expected=NormalizedPoint(0.82, 0.50)),
+        ]
+    )
+
+    assert profile.y_input_knots == ()
+    assert profile.y_output_knots == ()
+
+
 def test_gaze_smoother_averages_points() -> None:
     smoother = GazeSmoother(window_size=2)
     smoother.smooth(GazeSample(point=NormalizedPoint(0.2, 0.2)))
@@ -50,6 +91,16 @@ def test_gaze_smoother_averages_points() -> None:
 
     assert observation.x_norm == pytest.approx(0.3)
     assert observation.y_norm == pytest.approx(0.3)
+
+
+def test_gaze_smoother_downweights_low_confidence_outlier() -> None:
+    smoother = GazeSmoother(window_size=2)
+    smoother.smooth(GazeSample(point=NormalizedPoint(0.2, 0.2), confidence=0.95))
+    observation = smoother.smooth(GazeSample(point=NormalizedPoint(0.8, 0.8), confidence=0.1))
+
+    assert observation.x_norm == pytest.approx(0.257, abs=0.01)
+    assert observation.y_norm == pytest.approx(0.257, abs=0.01)
+    assert observation.confidence == pytest.approx(0.525)
 
 
 def test_inferencer_prefers_large_target() -> None:
@@ -64,6 +115,33 @@ def test_inferencer_prefers_large_target() -> None:
 
     assert target is not None
     assert target.target_id == "large"
+
+
+def test_inferencer_can_fall_back_to_nearest_large_target() -> None:
+    inferencer = GazeTargetInferencer(min_width=0.1, min_height=0.1, fallback_to_nearest=True)
+    targets = [
+        NormalizedScreenTarget(target_id="left", label="Left", role="region", x=0.1, y=0.1, width=0.2, height=0.2),
+        NormalizedScreenTarget(target_id="right", label="Right", role="region", x=0.7, y=0.1, width=0.2, height=0.2),
+    ]
+    observation = GazeSmoother(window_size=1).smooth(GazeSample(point=NormalizedPoint(0.34, 0.18), confidence=0.9))
+
+    target = inferencer.infer(observation, targets)
+
+    assert target is not None
+    assert target.target_id == "left"
+
+
+def test_inferencer_does_not_inflate_target_confidence_floor() -> None:
+    inferencer = GazeTargetInferencer(min_width=0.1, min_height=0.1)
+    targets = [
+        NormalizedScreenTarget(target_id="center", label="Center", role="region", x=0.3, y=0.3, width=0.4, height=0.4),
+    ]
+    observation = GazeSmoother(window_size=1).smooth(GazeSample(point=NormalizedPoint(0.5, 0.5), confidence=0.5))
+
+    target = inferencer.infer(observation, targets)
+
+    assert target is not None
+    assert target.confidence == pytest.approx(0.5)
 
 
 def test_dwell_trigger_fires_once_after_threshold() -> None:
@@ -119,6 +197,45 @@ def test_dwell_trigger_respects_action_cooldown_before_rearming() -> None:
     assert trigger.update(observation4, sidebar) is None
     assert trigger.update(observation5, sidebar) is None
     assert trigger.update(observation6, sidebar) is not None
+
+
+def test_dwell_trigger_preserves_partial_progress_during_brief_target_switches() -> None:
+    compose = NormalizedScreenTarget(target_id="compose", label="Compose", role="button", x=0.5, y=0.2, width=0.2, height=0.1).to_grounded_target(0.9)
+    neighbor = NormalizedScreenTarget(target_id="neighbor", label="Neighbor", role="button", x=0.72, y=0.2, width=0.2, height=0.1).to_grounded_target(0.9)
+    trigger = DwellTrigger(dwell_ms=500, min_confidence=0.6, switch_grace_ms=150, switch_decay=0.35)
+    smoother = GazeSmoother(window_size=1)
+
+    compose_1 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=180))
+    compose_2 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=180))
+    boundary_switch = smoother.smooth(GazeSample(point=NormalizedPoint(0.70, 0.22), confidence=0.9, delta_ms=100))
+    bounce_back = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=100))
+    compose_hold = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=300))
+
+    assert trigger.update(compose_1, compose) is None
+    assert trigger.update(compose_2, compose) is None
+    assert trigger.update(boundary_switch, neighbor) is None
+    assert trigger.update(bounce_back, compose) is None
+    proposal = trigger.update(compose_hold, compose)
+
+    assert proposal is not None
+    assert proposal.arguments["target_ref"] == "compose"
+
+
+def test_dwell_trigger_does_not_leak_progress_into_unrelated_target() -> None:
+    compose = NormalizedScreenTarget(target_id="compose", label="Compose", role="button", x=0.5, y=0.2, width=0.2, height=0.1).to_grounded_target(0.9)
+    neighbor = NormalizedScreenTarget(target_id="neighbor", label="Neighbor", role="button", x=0.72, y=0.2, width=0.2, height=0.1).to_grounded_target(0.9)
+    trigger = DwellTrigger(dwell_ms=500, min_confidence=0.6, switch_grace_ms=150, switch_decay=0.35)
+    smoother = GazeSmoother(window_size=1)
+
+    compose_1 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=180))
+    compose_2 = smoother.smooth(GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.9, delta_ms=180))
+    boundary_switch = smoother.smooth(GazeSample(point=NormalizedPoint(0.70, 0.22), confidence=0.9, delta_ms=100))
+    neighbor_hold = smoother.smooth(GazeSample(point=NormalizedPoint(0.72, 0.22), confidence=0.9, delta_ms=300))
+
+    assert trigger.update(compose_1, compose) is None
+    assert trigger.update(compose_2, compose) is None
+    assert trigger.update(boundary_switch, neighbor) is None
+    assert trigger.update(neighbor_hold, neighbor) is None
 
 
 def test_gaze_loop_triggers_highlight_dry_run() -> None:

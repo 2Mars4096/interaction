@@ -62,6 +62,9 @@ class FusionIntentResolver:
             }
             if target.bounds is not None:
                 arguments["target_bounds"] = target.bounds.model_dump(mode="json")
+            candidate = target.candidate
+            if candidate is not None and candidate.screen_point is not None:
+                arguments["screen_point"] = candidate.screen_point.model_dump(mode="json")
             if observation is not None and observation.x_norm is not None and observation.y_norm is not None:
                 arguments["normalized_point"] = {
                     "x": observation.x_norm,

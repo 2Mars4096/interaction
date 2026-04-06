@@ -75,6 +75,50 @@ def test_safe_navigation_key_is_allowed() -> None:
     assert request.proposal.action == ActionName.PRESS_KEY
 
 
+def test_structured_navigation_is_allowed_when_low_risk() -> None:
+    broker = CommandBroker()
+    proposal = ActionProposal(
+        action=ActionName.NAVIGATE_STRUCTURE,
+        arguments={"scope": "tab", "command": "next"},
+        confidence=0.9,
+        risk=RiskLevel.L1,
+        requires_confirmation=False,
+        rationale="Tab next is a reversible shortcut command.",
+    )
+
+    decision = broker.decide(proposal)
+    request = broker.build_execution_request(
+        decision,
+        EnvironmentSnapshot(active_app="Google Chrome"),
+    )
+
+    assert decision.decision == BrokerDecisionType.ALLOW
+    assert "tab next" in decision.reason
+    assert request.proposal.action == ActionName.NAVIGATE_STRUCTURE
+
+
+def test_unsupported_structured_navigation_is_rejected_with_profile_reason() -> None:
+    broker = CommandBroker()
+    proposal = ActionProposal(
+        action=ActionName.NAVIGATE_STRUCTURE,
+        arguments={
+            "scope": "pane",
+            "command": "right",
+            "profile_supported": False,
+            "profile_reject_reason": "Pane navigation is not supported for Mail.",
+        },
+        confidence=0.88,
+        risk=RiskLevel.L1,
+        requires_confirmation=False,
+        rationale="Profile validation already rejected the command.",
+    )
+
+    decision = broker.decide(proposal)
+
+    assert decision.decision == BrokerDecisionType.REJECT
+    assert decision.reason == "Pane navigation is not supported for Mail."
+
+
 def test_confirm_decision_can_be_promoted_after_user_confirmation() -> None:
     broker = CommandBroker()
     proposal = ActionProposal(

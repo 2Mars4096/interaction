@@ -5,6 +5,11 @@ from __future__ import annotations
 import argparse
 import ctypes
 from ctypes import util
+import time
+
+
+POINTER_SETTLE_SECONDS = 0.045
+BUTTON_HOLD_SECONDS = 0.012
 
 
 class CGPoint(ctypes.Structure):
@@ -75,12 +80,15 @@ def click(x: float, y: float) -> None:
     quartz = _load_quartz()
     point = CGPoint(x, y)
     _post_mouse_event(quartz, 5, point, 0)
+    time.sleep(POINTER_SETTLE_SECONDS)
     _post_mouse_event(quartz, 1, point, 0)
+    time.sleep(BUTTON_HOLD_SECONDS)
     _post_mouse_event(quartz, 2, point, 0)
 
 
 def double_click(x: float, y: float) -> None:
     click(x, y)
+    time.sleep(BUTTON_HOLD_SECONDS)
     click(x, y)
 
 
@@ -88,7 +96,9 @@ def right_click(x: float, y: float) -> None:
     quartz = _load_quartz()
     point = CGPoint(x, y)
     _post_mouse_event(quartz, 5, point, 0)
+    time.sleep(POINTER_SETTLE_SECONDS)
     _post_mouse_event(quartz, 3, point, 1)
+    time.sleep(BUTTON_HOLD_SECONDS)
     _post_mouse_event(quartz, 4, point, 1)
 
 

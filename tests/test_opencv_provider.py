@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 from interaction.vision import GazeSample, NormalizedPoint, OpenCVWebcamGazeProvider, WebcamGazeReading, WebcamProviderError
+from interaction.vision.provider_common import effective_delta_ms
 
 
 def test_estimate_pupil_center_detects_dark_blob() -> None:
@@ -64,6 +65,23 @@ def test_capture_average_sample_averages_successful_readings(monkeypatch) -> Non
     assert aggregate.sample.point.y == pytest_approx(0.4, tolerance=0.001)
 
 
+def test_effective_delta_ms_prefers_observed_frame_interval() -> None:
+    assert effective_delta_ms(100, last_frame_monotonic=None, current_monotonic=10.0) == 100
+    assert effective_delta_ms(100, last_frame_monotonic=10.0, current_monotonic=10.034) == pytest_approx(34, tolerance=1.0)
+
+
+def test_opencv_provider_supports_context_manager() -> None:
+    provider = OpenCVWebcamGazeProvider()
+    calls: list[str] = []
+    provider.open = lambda: calls.append("open")  # type: ignore[method-assign]
+    provider.close = lambda: calls.append("close")  # type: ignore[method-assign]
+
+    with provider as managed:
+        assert managed is provider
+
+    assert calls == ["open", "close"]
+
+
 def test_open_suppresses_native_camera_stderr(monkeypatch, capfd) -> None:
     class FakeCapture:
         def __init__(self, _camera_index: int) -> None:
@@ -88,6 +106,13 @@ def test_open_suppresses_native_camera_stderr(monkeypatch, capfd) -> None:
 
     captured = capfd.readouterr()
     assert captured.err == ""
+
+
+def test_opencv_provider_describes_coarse_gaze_only_capabilities() -> None:
+    capabilities = OpenCVWebcamGazeProvider.describe_capabilities()
+
+    assert capabilities["tracker"] == "opencv"
+    assert capabilities["supported_signals"] == []
 
 
 def pytest_approx(value: float, tolerance: float) -> float:

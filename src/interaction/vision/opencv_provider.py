@@ -2,65 +2,25 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import dataclass
-import os
 from pathlib import Path
-from typing import Any, Protocol
+import time
+from typing import Any
 
 import cv2
 import numpy as np
 
 from .calibration import NormalizedPoint
 from .gaze import GazeSample
+from .provider_common import clamp_unit_interval, effective_delta_ms, silence_opencv_logging, suppress_native_stderr
+from .provider_types import (
+    WebcamGazeReading,
+    WebcamProviderContextMixin,
+    WebcamProviderError,
+    WebcamSampleAggregate,
+)
 
 
-class WebcamProviderError(RuntimeError):
-    """Raised when the webcam provider cannot open or read from the camera."""
-
-    def __init__(self, code: str, message: str, *, payload: dict[str, Any] | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.payload = payload or {}
-
-
-@dataclass(frozen=True)
-class WebcamGazeReading:
-    sample: GazeSample
-    frame_size: tuple[int, int]
-    face_bbox: tuple[int, int, int, int]
-    eye_boxes: tuple[tuple[int, int, int, int], ...]
-    frame: np.ndarray | None = None
-    pupil_points: tuple[tuple[int, int], ...] = ()
-
-
-@dataclass(frozen=True)
-class WebcamSampleAggregate:
-    sample: GazeSample
-    used_frames: int
-    attempted_frames: int
-
-
-class WebcamProvider(Protocol):
-    camera_index: int
-
-    def open(self) -> None: ...
-
-    def close(self) -> None: ...
-
-    def read(self, *, delta_ms: int = 100) -> WebcamGazeReading | None: ...
-
-    def capture_average_sample(
-        self,
-        *,
-        required_frames: int = 6,
-        max_attempts: int | None = None,
-        delta_ms: int = 100,
-    ) -> WebcamSampleAggregate | None: ...
-
-
-class OpenCVWebcamGazeProvider:
+class OpenCVWebcamGazeProvider(WebcamProviderContextMixin):
     """Coarse webcam gaze estimator using OpenCV cascades and pupil heuristics."""
 
     def __init__(self, camera_index: int = 0) -> None:
@@ -71,12 +31,21 @@ class OpenCVWebcamGazeProvider:
             cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_eye_tree_eyeglasses.xml")),
             cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_eye.xml")),
         ]
+        self._last_read_monotonic: float | None = None
+
+    @staticmethod
+    def describe_capabilities() -> dict[str, Any]:
+        return {
+            "tracker": "opencv",
+            "supported_signals": [],
+            "signal_notes": "Coarse gaze-only fallback without wink, mouth-open, or head-pose control signals.",
+        }
 
     def open(self) -> None:
         if self.capture is not None:
             return
-        _silence_opencv_logging()
-        with _suppress_native_stderr():
+        silence_opencv_logging()
+        with suppress_native_stderr():
             capture = cv2.VideoCapture(self.camera_index)
             is_opened = capture.isOpened()
             if not is_opened:
@@ -93,6 +62,10 @@ class OpenCVWebcamGazeProvider:
         if self.capture is not None:
             self.capture.release()
             self.capture = None
+        self._last_read_monotonic = None
+
+    def reset_tracking_state(self) -> None:
+        self._last_read_monotonic = None
 
     def read(self, *, delta_ms: int = 100) -> WebcamGazeReading | None:
         if self.capture is None:
@@ -101,6 +74,13 @@ class OpenCVWebcamGazeProvider:
         ok, frame = self.capture.read()
         if not ok or frame is None:
             return None
+        now = time.monotonic()
+        delta_ms = effective_delta_ms(
+            delta_ms,
+            last_frame_monotonic=self._last_read_monotonic,
+            current_monotonic=now,
+        )
+        self._last_read_monotonic = now
         return self.process_frame(frame, delta_ms=delta_ms)
 
     def process_frame(self, frame: np.ndarray, *, delta_ms: int = 100) -> WebcamGazeReading | None:
@@ -135,7 +115,7 @@ class OpenCVWebcamGazeProvider:
         avg_y = sum(point[1] for point in pupil_points) / len(pupil_points)
         confidence = min(1.0, 0.45 + 0.2 * len(pupil_points) + 0.15 * min(len(eye_boxes), 2))
         sample = GazeSample(
-            point=NormalizedPoint(x=_clamp(avg_x / width), y=_clamp(avg_y / height)),
+            point=NormalizedPoint(x=clamp_unit_interval(avg_x / width), y=clamp_unit_interval(avg_y / height)),
             confidence=confidence,
             delta_ms=delta_ms,
         )
@@ -146,6 +126,7 @@ class OpenCVWebcamGazeProvider:
             eye_boxes=tuple((int(ex), int(ey), int(ew), int(eh)) for ex, ey, ew, eh in eye_boxes),
             frame=frame.copy(),
             pupil_points=tuple((int(round(px)), int(round(py))) for px, py in pupil_points),
+            raw_sample=sample,
         )
 
     def capture_average_sample(
@@ -167,12 +148,13 @@ class OpenCVWebcamGazeProvider:
             readings.append(reading)
         if not readings:
             return None
-        avg_x = sum(reading.sample.point.x for reading in readings) / len(readings)
-        avg_y = sum(reading.sample.point.y for reading in readings) / len(readings)
-        avg_confidence = sum(reading.sample.confidence for reading in readings) / len(readings)
+        raw_samples = [reading.raw_sample or reading.sample for reading in readings]
+        avg_x = sum(sample.point.x for sample in raw_samples) / len(raw_samples)
+        avg_y = sum(sample.point.y for sample in raw_samples) / len(raw_samples)
+        avg_confidence = sum(sample.confidence for sample in raw_samples) / len(raw_samples)
         return WebcamSampleAggregate(
             sample=GazeSample(
-                point=NormalizedPoint(x=_clamp(avg_x), y=_clamp(avg_y)),
+                point=NormalizedPoint(x=clamp_unit_interval(avg_x), y=clamp_unit_interval(avg_y)),
                 confidence=max(0.0, min(1.0, avg_confidence)),
                 delta_ms=delta_ms,
             ),
@@ -202,7 +184,7 @@ class OpenCVWebcamGazeProvider:
         if eye_roi.size == 0:
             return None
         blurred = cv2.GaussianBlur(eye_roi, (7, 7), 0)
-        _, thresh = cv2.threshold(blurred, 45, 255, cv2.THRESH_BINARY_INV)
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None
@@ -213,37 +195,3 @@ class OpenCVWebcamGazeProvider:
         cx = moments["m10"] / moments["m00"]
         cy = moments["m01"] / moments["m00"]
         return cx, cy
-
-
-def _clamp(value: float) -> float:
-    return max(0.0, min(1.0, value))
-
-
-def _silence_opencv_logging() -> None:
-    logging = getattr(getattr(cv2, "utils", None), "logging", None)
-    if logging is None:
-        return
-    set_log_level = getattr(logging, "setLogLevel", None)
-    silent_level = getattr(logging, "LOG_LEVEL_SILENT", None)
-    if callable(set_log_level) and silent_level is not None:
-        set_log_level(silent_level)
-
-
-@contextmanager
-def _suppress_native_stderr():
-    try:
-        original_stderr = os.dup(2)
-    except OSError:
-        yield
-        return
-
-    devnull_fd = None
-    try:
-        devnull_fd = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull_fd, 2)
-        yield
-    finally:
-        os.dup2(original_stderr, 2)
-        os.close(original_stderr)
-        if devnull_fd is not None:
-            os.close(devnull_fd)

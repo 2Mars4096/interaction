@@ -1,4 +1,5 @@
 """Manual smoke wrapper for the Phase 5 productization CLI."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 

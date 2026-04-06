@@ -11,6 +11,8 @@ from interaction.contracts import (
     BrokerDecisionType,
     EnvironmentSnapshot,
     ExecutionRequest,
+    NavigationCommand,
+    StructuredNavigationRequest,
 )
 
 from .policy import BrokerPolicy
@@ -82,6 +84,11 @@ class CommandBroker:
         )
 
     def _allow_reason(self, proposal: ActionProposal) -> str:
+        if proposal.action == ActionName.NAVIGATE_STRUCTURE:
+            return (
+                f"Structured navigation '{self._navigation_label(proposal)}' is low-risk "
+                "and reversible under the current broker policy."
+            )
         return f"Action {proposal.action.value} is allowed by the current MVP broker policy."
 
     def _confirm_reason(self, proposal: ActionProposal) -> str:
@@ -93,6 +100,11 @@ class CommandBroker:
             return "Text transformation actions require confirmation in MVP."
         if proposal.action == ActionName.PRESS_KEY:
             return "Only a small allow-list of navigation keys auto-executes in MVP."
+        if proposal.action == ActionName.NAVIGATE_STRUCTURE:
+            return (
+                f"Structured navigation '{self._navigation_label(proposal)}' "
+                "requires confirmation at the current risk level."
+            )
         return "This action requires confirmation under the current broker policy."
 
     def _confirmation_prompt(self, proposal: ActionProposal) -> str:
@@ -115,11 +127,44 @@ class CommandBroker:
         if proposal.action == ActionName.PRESS_KEY:
             key = str(proposal.arguments.get("key", "")).strip()
             return f"Confirm pressing {key or 'the requested key'}?"
+        if proposal.action == ActionName.NAVIGATE_STRUCTURE:
+            return f"Confirm {self._navigation_confirmation_phrase(proposal)}?"
         return proposal.spoken_response or "Confirm this action?"
 
     def _reject_reason(self, proposal: ActionProposal) -> str:
         if proposal.risk.value == "L3":
             return "L3 actions are blocked by default in the MVP broker policy."
+        if proposal.action == ActionName.NAVIGATE_STRUCTURE and proposal.arguments.get("profile_supported") is False:
+            explicit_reason = str(proposal.arguments.get("profile_reject_reason", "")).strip()
+            if explicit_reason:
+                return explicit_reason
+            return (
+                f"Structured navigation '{self._navigation_label(proposal)}' is not "
+                "supported for the active app profile."
+            )
         if proposal.action == ActionName.REJECT:
             return "The proposal explicitly rejected the request."
         return "This action is rejected by the current broker policy."
+
+    @staticmethod
+    def _navigation_request(proposal: ActionProposal) -> StructuredNavigationRequest | None:
+        try:
+            return StructuredNavigationRequest.from_action_arguments(proposal.arguments)
+        except Exception:
+            return None
+
+    def _navigation_label(self, proposal: ActionProposal) -> str:
+        navigation = self._navigation_request(proposal)
+        if navigation is None:
+            return "structured navigation"
+        if navigation.command == NavigationCommand.INDEX:
+            return f"{navigation.scope.value} {navigation.index}"
+        return f"{navigation.scope.value} {navigation.command.value}"
+
+    def _navigation_confirmation_phrase(self, proposal: ActionProposal) -> str:
+        navigation = self._navigation_request(proposal)
+        if navigation is None:
+            return "this structured navigation action"
+        if navigation.command == NavigationCommand.INDEX:
+            return f"switching to {navigation.scope.value} {navigation.index}"
+        return f"{navigation.command.value} {navigation.scope.value} navigation"

@@ -1,4 +1,5 @@
 """Live webcam smoke harness for the Phase 3 OpenCV gaze provider patch."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 

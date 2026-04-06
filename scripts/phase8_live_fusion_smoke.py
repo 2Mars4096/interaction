@@ -1,4 +1,5 @@
 """Manual smoke wrapper for the Phase 8 live multimodal fusion path."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 

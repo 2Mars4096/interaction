@@ -59,10 +59,33 @@ class ActionName(StrEnum):
     OPEN_APP = "open_app"
     SWITCH_APP = "switch_app"
     PRESS_KEY = "press_key"
+    NAVIGATE_STRUCTURE = "navigate_structure"
     TYPE_TEXT = "type_text"
     TRANSLATE_TEXT = "translate_text"
     CLARIFY = "clarify"
     REJECT = "reject"
+
+
+class NavigationScope(StrEnum):
+    APP = "app"
+    WINDOW = "window"
+    TAB = "tab"
+    PANE = "pane"
+    SPACE = "space"
+    DISPLAY = "display"
+
+
+class NavigationCommand(StrEnum):
+    NEXT = "next"
+    BACK = "back"
+    LEFT = "left"
+    RIGHT = "right"
+    UP = "up"
+    DOWN = "down"
+    NEW = "new"
+    CLOSE = "close"
+    REOPEN = "reopen"
+    INDEX = "index"
 
 
 class BoundingBox(ContractModel):
@@ -70,6 +93,57 @@ class BoundingBox(ContractModel):
     y: float = Field(ge=0.0)
     width: float = Field(gt=0.0)
     height: float = Field(gt=0.0)
+
+
+class ScreenPoint(ContractModel):
+    x: float
+    y: float
+
+
+class ScreenBounds(ContractModel):
+    x: float
+    y: float
+    width: float = Field(gt=0.0)
+    height: float = Field(gt=0.0)
+
+
+class TargetCandidateSource(StrEnum):
+    ACCESSIBILITY = "accessibility"
+    VISION = "vision"
+    OCR = "ocr"
+    MANUAL = "manual"
+    UNKNOWN = "unknown"
+
+
+class DesktopTargetCandidate(ContractModel):
+    candidate_id: str = Field(min_length=1)
+    source: TargetCandidateSource = TargetCandidateSource.UNKNOWN
+    display_label: str | None = None
+    label: str | None = None
+    role: str | None = None
+    subrole: str | None = None
+    value_text: str | None = None
+    normalized_bounds: BoundingBox | None = None
+    screen_bounds: ScreenBounds | None = None
+    screen_point: ScreenPoint | None = None
+    enabled: bool | None = None
+    focusable: bool | None = None
+    editable: bool | None = None
+    invocable: bool | None = None
+    available_actions: list[str] = Field(default_factory=list)
+    app_name: str | None = None
+    bundle_id: str | None = None
+    pid: int | None = Field(default=None, ge=0)
+    window_title: str | None = None
+    window_id: str | None = None
+    snapshot_id: str | None = None
+    collected_at_ms: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_location_reference(self) -> "DesktopTargetCandidate":
+        if self.normalized_bounds is None and self.screen_bounds is None and self.screen_point is None:
+            raise ValueError("desktop target candidates require normalized_bounds, screen_bounds, or screen_point")
+        return self
 
 
 class TranscriptSegment(ContractModel):
@@ -102,12 +176,50 @@ class GroundedTarget(ContractModel):
     confidence: float = Field(ge=0.0, le=1.0)
     screen_region: str | None = None
     bounds: BoundingBox | None = None
+    source: TargetCandidateSource | None = None
+    candidate: DesktopTargetCandidate | None = None
+
+    @model_validator(mode="after")
+    def validate_candidate_reference(self) -> "GroundedTarget":
+        if self.candidate is not None and self.candidate.candidate_id != self.target_id:
+            raise ValueError("grounded target candidate_id must match target_id")
+        return self
+
+
+class StructuredNavigationRequest(ContractModel):
+    scope: NavigationScope
+    command: NavigationCommand
+    count: int = Field(default=1, ge=1)
+    index: int | None = Field(default=None, ge=1)
+    app_profile: str | None = Field(default=None, min_length=1)
+
+    @classmethod
+    def from_action_arguments(cls, arguments: dict[str, Any]) -> "StructuredNavigationRequest":
+        return cls.model_validate(
+            {
+                "scope": arguments.get("scope"),
+                "command": arguments.get("command"),
+                "count": arguments.get("count", 1),
+                "index": arguments.get("index"),
+                "app_profile": arguments.get("app_profile"),
+            }
+        )
+
+    @model_validator(mode="after")
+    def validate_index_usage(self) -> "StructuredNavigationRequest":
+        if self.command == NavigationCommand.INDEX and self.index is None:
+            raise ValueError("index navigation requires an index value")
+        if self.command != NavigationCommand.INDEX and self.index is not None:
+            raise ValueError("only index navigation may include an index value")
+        return self
 
 
 class EnvironmentSnapshot(ContractModel):
     platform: PlatformName = PlatformName.MACOS
     active_app: str | None = None
+    active_bundle_id: str | None = None
     active_window_title: str | None = None
+    active_profile_id: str | None = None
 
 
 class SessionState(ContractModel):
@@ -145,6 +257,8 @@ class ActionProposal(ContractModel):
     def validate_high_risk_confirmation(self) -> "ActionProposal":
         if self.risk == RiskLevel.L3 and not self.requires_confirmation:
             raise ValueError("L3 proposals must require confirmation")
+        if self.action == ActionName.NAVIGATE_STRUCTURE:
+            StructuredNavigationRequest.from_action_arguments(self.arguments)
         return self
 
 
