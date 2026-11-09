@@ -1,9 +1,11 @@
 """Small CLI entry point for repeatable local testing."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -11,7 +13,12 @@ import time
 from types import SimpleNamespace
 from typing import Any, cast
 
-from interaction.audio import MacOSLiveSpeechProvider, SpeechCaptureError
+_DEFAULT_MPLCONFIGDIR = Path("/tmp/interaction-matplotlib")
+if "MPLCONFIGDIR" not in os.environ:
+    _DEFAULT_MPLCONFIGDIR.mkdir(parents=True, exist_ok=True)
+    os.environ["MPLCONFIGDIR"] = str(_DEFAULT_MPLCONFIGDIR)
+
+from interaction.audio import MacOSFileSpeechProvider, MacOSLiveSpeechProvider, SpeechCaptureError
 from interaction.contracts import ActionName, BoundingBox, DesktopTargetCandidate, EnvironmentSnapshot, GazeObservation, GroundedTarget, SessionMode
 from interaction.feedback import (
     FusionFeedbackEvent,
@@ -21,21 +28,29 @@ from interaction.feedback import (
     VoiceFeedbackEvent,
     VoiceLoopPhase,
 )
+from interaction.intent.voice import match_review_token, VoiceDirectiveType
 from interaction.intent import GemmaIntentInterpreter, InterpreterStrategy, VoiceInterpretationRouter
 from interaction.persistence import JsonStateStore, RuntimePaths
-from interaction.platform import MacOSPlatformAdapter, capture_frontmost_environment, current_position_normalized, normalized_to_screen_point
+from interaction.platform import DEFAULT_MACOS_PROFILE_REGISTRY, MacOSPlatformAdapter, capture_frontmost_environment, current_position_normalized, normalized_to_screen_point
 from interaction.platform.base import TargetCandidateQuery
 from interaction.runtime import (
     GazeTrackingLoop,
     MultimodalFusionLoop,
     VoiceCommandLoop,
+    VoiceEvalLane,
+    VoiceEvalManifest,
+    VoiceFixtureGenerationError,
     WebcamCalibrationError,
     capture_live_gaze_context,
     collect_webcam_calibration,
     collect_webcam_validation,
     default_webcam_targets,
+    discover_voice_eval_manifests,
+    evaluate_voice_manifest,
+    generate_voice_fixture_corpus,
     generate_single_screen_calibration_targets,
     generate_single_screen_validation_targets,
+    render_voice_benchmark_summary,
     run_live_assisted_cursor_follow,
     run_live_cursor_follow,
     run_live_cursor_snap,
@@ -43,9 +58,22 @@ from interaction.runtime import (
     run_live_webcam_benchmark,
     run_live_wink_click_test,
     run_live_webcam_trace,
+    summarize_voice_benchmark_results,
+    summarize_voice_events,
 )
 from interaction.session import SessionLogger, SessionReplay, serialize_feedback_event
-from interaction.ui import CalibrationDotOverlay, ConsoleOverlayRenderer, LiveGazeDotOverlay, LiveSnapDotsOverlay, LiveWebcamDebugPreview, OverlayController
+from interaction.ui import (
+    CalibrationDotOverlay,
+    ConsoleOverlayRenderer,
+    LiveGazeDotOverlay,
+    LiveSnapDotsOverlay,
+    LiveWebcamDebugPreview,
+    OverlayController,
+    ShellDemoController,
+    TerminalShellRenderer,
+    build_shell_view_state,
+    run_shell_gui_demo,
+)
 from interaction.vision import (
     CalibrationProfile,
     CalibrationSample,
@@ -74,8 +102,18 @@ def main(argv: list[str] | None = None) -> int:
     store = JsonStateStore(runtime_paths)
     if args.command == "voice-smoke":
         payload = _run_voice_smoke(args, store)
+    elif args.command == "shell-smoke":
+        payload = _run_shell_smoke(args, store)
+    elif args.command == "shell-gui-demo":
+        payload = _run_shell_gui_demo(args, store)
     elif args.command in {"voice-live", "voice-dictate"}:
-        payload = _run_voice_live(args, store)
+        payload = _run_voice_session(args, store)
+    elif args.command == "voice-eval":
+        payload = _run_voice_eval(args, store)
+    elif args.command == "voice-benchmark":
+        payload = _run_voice_benchmark(args, store)
+    elif args.command == "voice-generate-fixtures":
+        payload = _run_voice_generate_fixtures(args)
     elif args.command == "gaze-calibrate":
         payload = _run_gaze_calibrate(args, store)
     elif args.command == "gaze-validate":
@@ -141,6 +179,10 @@ def _build_parser() -> argparse.ArgumentParser:
     voice_live.add_argument("--runtime-dir", default=".interaction")
     voice_live.add_argument("--session-name", default="voice-live")
     voice_live.add_argument("--execute", action="store_true")
+    voice_live.add_argument("--dry-run", action="store_true", help="Preview only, regardless of saved settings.")
+    voice_live.add_argument("--confirm-duration", type=float, default=3.0)
+    voice_live.add_argument("--continuous", action="store_true", help="Keep listening until stop listening or Ctrl+C.")
+    voice_live.add_argument("--max-turns", type=int, default=0, help="Limit continuous capture windows; 0 means unlimited.")
     _add_interpreter_argument(voice_live)
 
     voice_dictate = subparsers.add_parser("voice-dictate")
@@ -152,10 +194,68 @@ def _build_parser() -> argparse.ArgumentParser:
     voice_dictate.add_argument("--runtime-dir", default=".interaction")
     voice_dictate.add_argument("--session-name", default="voice-dictate")
     voice_dictate.add_argument("--execute", action="store_true")
+    voice_dictate.add_argument("--dry-run", action="store_true", help="Preview only, regardless of saved settings.")
+    voice_dictate.add_argument("--confirm-duration", type=float, default=3.0)
+    voice_dictate.add_argument("--continuous", action="store_true", help="Keep listening until stop listening or Ctrl+C.")
+    voice_dictate.add_argument("--max-turns", type=int, default=0, help="Limit continuous capture windows; 0 means unlimited.")
     voice_dictate.set_defaults(lane="dictation", streaming=True)
     _add_interpreter_argument(voice_dictate)
 
+    voice_eval = subparsers.add_parser("voice-eval")
+    voice_eval.add_argument("--audio", required=True)
+    voice_eval.add_argument("--manifest", default=None)
+    voice_eval.add_argument("--locale", default=None)
+    voice_eval.add_argument("--lane", choices=["command", "dictation", "hybrid"], default=None)
+    voice_eval.add_argument("--active-app", default="Finder")
+    voice_eval.add_argument("--active-bundle-id", default=None)
+    voice_eval.add_argument("--active-window-title", default="Voice Eval")
+    voice_eval.add_argument("--runtime-dir", default=".interaction")
+    voice_eval.add_argument("--session-name", default="voice-eval")
+    _add_interpreter_argument(voice_eval)
+
+    voice_benchmark = subparsers.add_parser("voice-benchmark")
+    voice_benchmark.add_argument("--fixtures", required=True)
+    voice_benchmark.add_argument("--manifest-glob", default="*.json")
+    voice_benchmark.add_argument("--locale", default=None)
+    voice_benchmark.add_argument("--lane", choices=["command", "dictation", "hybrid"], default=None)
+    voice_benchmark.add_argument("--active-app", default="Finder")
+    voice_benchmark.add_argument("--active-bundle-id", default=None)
+    voice_benchmark.add_argument("--active-window-title", default="Voice Benchmark")
+    voice_benchmark.add_argument("--runtime-dir", default=".interaction")
+    voice_benchmark.add_argument("--session-name", default="voice-benchmark")
+    voice_benchmark.add_argument("--fail-fast", action="store_true")
+    _add_interpreter_argument(voice_benchmark)
+
+    voice_generate = subparsers.add_parser("voice-generate-fixtures")
+    voice_generate.add_argument("--fixtures", required=True)
+    voice_generate.add_argument("--manifest-glob", default="*.json")
+    voice_generate.add_argument("--output-root", default=None)
+    voice_generate.add_argument("--runtime-dir", default=".interaction")
+    voice_generate.add_argument("--session-name", default="voice-generate-fixtures")
+    voice_generate.add_argument("--force", action="store_true")
+
+    shell_smoke = subparsers.add_parser("shell-smoke")
+    shell_smoke.add_argument("--surface", choices=["workspace", "home", "browser", "notes"], default="workspace")
+    shell_smoke.add_argument("--utterance", default="open Safari")
+    shell_smoke.add_argument("--follow-up", default=None)
+    shell_smoke.add_argument("--lane", choices=["command", "dictation", "hybrid"], default="command")
+    shell_smoke.add_argument("--runtime-dir", default=".interaction")
+    shell_smoke.add_argument("--session-name", default="shell-smoke")
+    shell_smoke.add_argument("--execute", action="store_true")
+    _add_interpreter_argument(shell_smoke)
+
+    shell_gui_demo = subparsers.add_parser("shell-gui-demo")
+    shell_gui_demo.add_argument("--surface", choices=["workspace", "home", "browser", "notes"], default="workspace")
+    shell_gui_demo.add_argument("--utterance", default=None)
+    shell_gui_demo.add_argument("--lane", choices=["command", "dictation", "hybrid"], default="command")
+    shell_gui_demo.add_argument("--headless", action="store_true")
+    shell_gui_demo.add_argument("--runtime-dir", default=".interaction")
+    shell_gui_demo.add_argument("--session-name", default="shell-gui-demo")
+    shell_gui_demo.add_argument("--execute", action="store_true")
+    _add_interpreter_argument(shell_gui_demo)
+
     gaze_calibrate = subparsers.add_parser("gaze-calibrate")
+    gaze_calibrate.add_argument("--interactive", action="store_true", help="Show calibration dots and wait for each fixation.")
     gaze_calibrate.add_argument("--camera-index", type=int, default=None)
     gaze_calibrate.add_argument("--tracker", choices=["opencv", "mediapipe"], default="opencv")
     gaze_calibrate.add_argument("--tracker-model-path", default=None)
@@ -344,6 +444,7 @@ def _build_parser() -> argparse.ArgumentParser:
     fusion_live.add_argument("--runtime-dir", default=".interaction")
     fusion_live.add_argument("--session-name", default="fusion-live")
     fusion_live.add_argument("--execute", action="store_true")
+    fusion_live.add_argument("--dry-run", action="store_true", help="Preview only, regardless of saved settings.")
     _add_interpreter_argument(fusion_live)
 
     replay = subparsers.add_parser("replay")
@@ -426,6 +527,7 @@ def _add_gaze_live_arguments(
     parser.add_argument("--runtime-dir", default=".interaction")
     parser.add_argument("--session-name", default=session_name_default)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", help="Preview only, regardless of saved settings.")
 
 
 def _add_interpreter_argument(parser: argparse.ArgumentParser) -> None:
@@ -440,8 +542,41 @@ def _build_gemma_backend(_args: argparse.Namespace) -> object | None:
     return None
 
 
-def _build_router(args: argparse.Namespace) -> VoiceInterpretationRouter:
-    backend = _build_gemma_backend(args)
+class _FixtureGemmaBackend:
+    def __init__(self, responses: dict[str, dict[str, Any]]) -> None:
+        self._responses = responses
+
+    def interpret(self, request: Any) -> dict[str, Any] | None:
+        transcript = getattr(request, "transcript", None)
+        if not isinstance(transcript, str):
+            return None
+        return self._responses.get(_normalize_fixture_transcript(transcript))
+
+
+def _normalize_fixture_transcript(value: str) -> str:
+    return " ".join(value.strip().split()).lower()
+
+
+def _build_manifest_gemma_backend(manifest: VoiceEvalManifest | None) -> object | None:
+    if manifest is None or not isinstance(manifest.gemma_response, dict):
+        return None
+    transcripts = list(manifest.gemma_transcript_aliases)
+    if manifest.reference_transcript:
+        transcripts.append(manifest.reference_transcript)
+    if manifest.prompt_text:
+        transcripts.append(manifest.prompt_text)
+    normalized = {
+        _normalize_fixture_transcript(candidate): dict(manifest.gemma_response)
+        for candidate in transcripts
+        if isinstance(candidate, str) and candidate.strip()
+    }
+    if not normalized:
+        return None
+    return _FixtureGemmaBackend(normalized)
+
+
+def _build_router(args: argparse.Namespace, *, manifest: VoiceEvalManifest | None = None) -> VoiceInterpretationRouter:
+    backend = _build_manifest_gemma_backend(manifest) or _build_gemma_backend(args)
     return VoiceInterpretationRouter(
         strategy=InterpreterStrategy(args.interpreter),
         gemma_interpreter=GemmaIntentInterpreter(cast(Any, backend)),
@@ -453,11 +588,14 @@ def _build_voice_loop(
     *,
     effective_dry_run: bool,
     default_mode: SessionMode,
+    signal_only: bool = False,
+    manifest: VoiceEvalManifest | None = None,
 ) -> VoiceCommandLoop:
     return VoiceCommandLoop(
         adapter=MacOSPlatformAdapter(dry_run=effective_dry_run),
-        router=_build_router(args),
+        router=_build_router(args, manifest=manifest),
         default_mode=default_mode,
+        signal_only=signal_only,
     )
 
 
@@ -476,9 +614,47 @@ def _capture_runtime_environment(*, fallback_app: str, fallback_window: str | No
     else:
         if environment.active_app or environment.active_bundle_id or environment.active_window_title:
             if environment.active_window_title is None and fallback_window is not None:
-                return environment.model_copy(update={"active_window_title": fallback_window})
-            return environment
-    return EnvironmentSnapshot(active_app=fallback_app, active_window_title=fallback_window)
+                environment = environment.model_copy(update={"active_window_title": fallback_window})
+            return _annotate_environment_profile(environment)
+    return _annotate_environment_profile(
+        EnvironmentSnapshot(active_app=fallback_app, active_window_title=fallback_window)
+    )
+
+
+def _annotate_environment_profile(environment: EnvironmentSnapshot) -> EnvironmentSnapshot:
+    if environment.active_profile_id:
+        return environment
+    profile, _ = DEFAULT_MACOS_PROFILE_REGISTRY.resolve_profile(environment)
+    if profile is None:
+        return environment
+    return environment.model_copy(update={"active_profile_id": profile.profile_id})
+
+
+def _shell_environment(surface: str) -> EnvironmentSnapshot:
+    normalized = surface.strip().lower()
+    if normalized == "browser":
+        return _annotate_environment_profile(
+            EnvironmentSnapshot(
+                active_app="Safari",
+                active_bundle_id="com.apple.Safari",
+                active_window_title="Shell Browser",
+            )
+        )
+    if normalized == "notes":
+        return _annotate_environment_profile(
+            EnvironmentSnapshot(
+                active_app="Notes",
+                active_bundle_id="com.apple.Notes",
+                active_window_title="Shell Notes",
+            )
+        )
+    return _annotate_environment_profile(
+        EnvironmentSnapshot(
+            active_app="Finder",
+            active_bundle_id="com.apple.finder",
+            active_window_title="Shell Workspace",
+        )
+    )
 
 
 def _run_voice_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
@@ -505,7 +681,7 @@ def _run_voice_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[st
                 fallback_to_dictation=fallback_to_dictation,
             )
         )
-    return _build_payload(
+    payload = _build_payload(
         source="voice",
         events=events,
         logger=logger,
@@ -519,6 +695,128 @@ def _run_voice_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             "voice_session_state": loop.state_snapshot(),
         },
     )
+    payload.update(
+        _shell_payload(
+            source="voice",
+            events=events,
+            overlay=overlay,
+            environment=environment,
+            mode=lane_mode,
+            session_state=loop.state_snapshot(),
+        )
+    )
+    return payload
+
+
+def _run_shell_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
+    settings = store.load_settings()
+    effective_dry_run = _effective_dry_run(settings, args)
+    lane_mode, fallback_to_dictation = _voice_lane_settings(str(args.lane))
+    loop = _build_voice_loop(args, effective_dry_run=effective_dry_run, default_mode=lane_mode)
+    logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
+    overlay = OverlayController()
+    renderer = ConsoleOverlayRenderer()
+    environment = _shell_environment(str(args.surface))
+    events = loop.run_text_turn(
+        args.utterance,
+        environment,
+        mode=lane_mode,
+        fallback_to_dictation=fallback_to_dictation,
+    )
+    if args.follow_up:
+        events.extend(
+            loop.run_text_turn(
+                args.follow_up,
+                environment,
+                mode=lane_mode,
+                fallback_to_dictation=fallback_to_dictation,
+            )
+        )
+    payload = _build_payload(
+        source="voice",
+        events=events,
+        logger=logger,
+        overlay=overlay,
+        renderer=renderer,
+        extra={
+            "settings": _settings_payload(settings, effective_dry_run),
+            "interpreter": args.interpreter,
+            "environment": environment.model_dump(mode="json"),
+            "voice_lane": str(args.lane),
+            "voice_session_state": loop.state_snapshot(),
+            "shell_surface": str(args.surface),
+        },
+    )
+    payload.update(
+        _shell_payload(
+            source="voice",
+            events=events,
+            overlay=overlay,
+            environment=environment,
+            mode=lane_mode,
+            session_state=loop.state_snapshot(),
+            surface_override=str(args.surface),
+        )
+    )
+    return payload
+
+
+def _run_shell_gui_demo(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
+    settings = store.load_settings()
+    effective_dry_run = _effective_dry_run(settings, args)
+    lane_mode, fallback_to_dictation = _voice_lane_settings(str(args.lane))
+    loop = _build_voice_loop(args, effective_dry_run=effective_dry_run, default_mode=lane_mode)
+    logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
+    overlay = OverlayController()
+    renderer = ConsoleOverlayRenderer()
+    environment = _shell_environment(str(args.surface))
+    controller = ShellDemoController(
+        loop=loop,
+        environment=environment,
+        mode=lane_mode,
+        fallback_to_dictation=fallback_to_dictation,
+        surface_override=str(args.surface),
+    )
+
+    if args.utterance:
+        controller.run_utterance(str(args.utterance))
+    if not args.headless:
+        run_shell_gui_demo(
+            controller,
+            title=f"Interaction {str(args.surface).title()} Demo",
+        )
+
+    payload = _build_payload(
+        source="voice",
+        events=controller.events,
+        logger=logger,
+        overlay=overlay,
+        renderer=renderer,
+        extra={
+            "settings": _settings_payload(settings, effective_dry_run),
+            "interpreter": args.interpreter,
+            "environment": controller.environment.model_dump(mode="json"),
+            "voice_lane": str(args.lane),
+            "voice_session_state": loop.state_snapshot(),
+            "shell_surface": controller.surface_override or str(args.surface),
+            "gui_demo": True,
+            "headless": bool(args.headless),
+        },
+    )
+    payload.update(
+        _shell_payload(
+            source="voice",
+            events=controller.events,
+            overlay=overlay,
+            environment=controller.environment,
+            mode=lane_mode,
+            session_state=loop.state_snapshot(),
+            surface_override=controller.surface_override,
+            pointer_mode=controller.pointer_mode,
+            selection_label=controller.selection_label,
+        )
+    )
+    return payload
 
 
 def _voice_lane_settings(lane: str) -> tuple[SessionMode, bool]:
@@ -530,18 +828,68 @@ def _voice_lane_settings(lane: str) -> tuple[SessionMode, bool]:
     return SessionMode.COMMAND, False
 
 
-def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
+def _same_frontmost_context(left: EnvironmentSnapshot, right: EnvironmentSnapshot) -> bool:
+    return (left.active_app, left.active_bundle_id, left.active_window_title) == (
+        right.active_app, right.active_bundle_id, right.active_window_title
+    )
+
+
+def _print_live_feedback(events: list[object]) -> None:
+    for event in events:
+        phase = getattr(event, "phase", None)
+        if getattr(phase, "value", phase) in {"confirming", "recovering", "executing"}:
+            print(f"[interaction] {getattr(event, 'message', '')}", file=sys.stderr, flush=True)
+
+
+def _run_voice_session(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
+    if not args.continuous:
+        return _run_voice_live(args, store)
+    mode, _ = _voice_lane_settings(args.lane)
+    loop = _build_voice_loop(args, effective_dry_run=_effective_dry_run(store.load_settings(), args), default_mode=mode)
+    turns = 0
+    payload: dict[str, Any] = {}
+    print('[voice] Session started. Say "stop listening" or press Ctrl+C to stop.', file=sys.stderr, flush=True)
+    try:
+        while args.max_turns <= 0 or turns < args.max_turns:
+            payload = _run_voice_live(args, store, session_loop=loop)
+            turns += 1
+            capture = payload.get("live_capture") or {}
+            if payload.get("session_stopped"):
+                break
+            if capture.get("status") == "error" and capture.get("error") != "empty_transcript":
+                break
+    except KeyboardInterrupt:
+        loop.pending_decision = None
+        loop.pending_dictation_history = None
+        payload["session_stopped"] = True
+        print("[voice] Session stopped.", file=sys.stderr, flush=True)
+    payload["session_turns"] = turns
+    payload["voice_session_state"] = loop.state_snapshot()
+    return payload
+
+
+def _run_voice_live(args: argparse.Namespace, store: JsonStateStore, *, session_loop=None) -> dict[str, Any]:
     settings = store.load_settings()
     effective_dry_run = _effective_dry_run(settings, args)
     provider = MacOSLiveSpeechProvider(store.paths)
     recording_path = _resolve_voice_recording_path(args, store.paths)
+    if recording_path and args.continuous:
+        recording = Path(recording_path)
+        index = 1
+        while recording.exists():
+            recording = Path(recording_path).with_name(f"{Path(recording_path).stem}-{index}{Path(recording_path).suffix}")
+            index += 1
+        recording_path = str(recording)
     lane_mode, fallback_to_dictation = _voice_lane_settings(str(args.lane))
-    loop = _build_voice_loop(args, effective_dry_run=effective_dry_run, default_mode=lane_mode)
+    loop = session_loop or _build_voice_loop(args, effective_dry_run=effective_dry_run, default_mode=lane_mode)
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
     fallback_window = "Live Dictation" if getattr(args, "command", None) == "voice-dictate" else "Live Voice"
     stream_environment = _capture_runtime_environment(fallback_app="Finder", fallback_window=fallback_window)
+    session_stopped = False
+    confirmation_captures: list[dict[str, Any]] = []
+    print(f"[voice] Listening for {args.duration:g}s ({args.lane}).", file=sys.stderr, flush=True)
     events: list[object] = [
         VoiceFeedbackEvent(
             phase=VoiceLoopPhase.LISTENING,
@@ -549,9 +897,42 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         )
     ]
     terminal_logger = _build_live_voice_terminal_logger()
+    last_state_tick = time.monotonic()
     seen_stream_partials: set[str] = set()
     seen_stream_clauses: set[int] = set()
     stream_final_logged = False
+
+    def handle_transcript(transcript: str, confidence: float | None) -> list[object]:
+        nonlocal session_stopped, stream_environment, last_state_tick
+        tick = time.monotonic()
+        loop.state.advance(int((tick - last_state_tick) * 1000))
+        last_state_tick = tick
+        if session_stopped:
+            return []
+        if " ".join(transcript.casefold().strip(" .!?").split()) == "stop listening":
+            session_stopped = True
+            loop.pending_decision = None
+            loop.pending_dictation_history = None
+            return [VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="Listening stopped.")]
+        current = _capture_runtime_environment(fallback_app="Finder", fallback_window=fallback_window)
+        if loop.pending_decision is not None and not _same_frontmost_context(stream_environment, current):
+            loop.pending_decision = None
+            loop.pending_dictation_history = None
+            return [VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="The active app or window changed. Pending action cancelled; repeat your command in the intended window.")]
+        if loop.pending_decision is not None:
+            transcript = transcript.strip().strip(".!?")
+            if match_review_token(transcript, pending_confirmation=True) is None or (confidence is not None and confidence < 0.6):
+                return [VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="An action is awaiting confirmation. Say yes or cancel.")]
+        previous = loop.state.latest_environment
+        if previous is not None and not _same_frontmost_context(previous, current):
+            loop.dictated_clause_history.clear()
+            loop.pending_dictation_history = None
+            loop.state.clear_active_scope()
+        stream_environment = current
+        result = loop.run_text_turn(transcript, current, final_confidence=confidence, begin_turn=False,
+                                    mode=lane_mode, fallback_to_dictation=fallback_to_dictation)
+        _print_live_feedback(result)
+        return result
 
     def emit_live_voice_event(payload: dict[str, object]) -> None:
         nonlocal stream_final_logged
@@ -593,14 +974,7 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
                 )
             )
             events.extend(
-                loop.run_text_turn(
-                    transcript,
-                    stream_environment,
-                    final_confidence=final_confidence,
-                    begin_turn=False,
-                    mode=lane_mode,
-                    fallback_to_dictation=fallback_to_dictation,
-                )
+                handle_transcript(transcript, final_confidence)
             )
             return
         if event == "final" and status != "error" and not stream_final_logged:
@@ -705,14 +1079,7 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
                     )
                 )
                 events.extend(
-                    loop.run_text_turn(
-                        clause.transcript,
-                        stream_environment,
-                        final_confidence=clause.confidence,
-                        begin_turn=False,
-                        mode=lane_mode,
-                        fallback_to_dictation=fallback_to_dictation,
-                    )
+                    handle_transcript(clause.transcript, clause.confidence)
                 )
         else:
             assert capture is not None
@@ -736,16 +1103,37 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
                 )
             )
             events.extend(
-                loop.run_text_turn(
-                    capture.transcript,
-                    stream_environment,
-                    final_confidence=capture.confidence,
-                    begin_turn=False,
-                    mode=lane_mode,
-                    fallback_to_dictation=fallback_to_dictation,
-                )
+                handle_transcript(capture.transcript, capture.confidence)
             )
-    return _build_payload(
+    # Confirmation stays in this loop so the proposed action survives until yes/no.
+    provider.live_event_callback = terminal_logger
+    for attempt in range(2):
+        if loop.pending_decision is None or session_stopped:
+            break
+        prompt = loop.pending_decision.confirmation_prompt or "Confirm this action?"
+        print(f"[voice] {prompt} Say yes or cancel.", file=sys.stderr, flush=True)
+        try:
+            confirmation = provider.capture_turn(duration_s=args.confirm_duration, locale=args.locale)
+        except SpeechCaptureError as error:
+            events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message=f"{error.message} Pending action cancelled."))
+            confirmation_captures.append({"status": "error", "error": error.code})
+            break
+        confirmation_captures.append({"status": "success", "transcript": confirmation.transcript})
+        token = confirmation.transcript.strip().strip(".!?")
+        if token.casefold() == "stop listening":
+            events.extend(handle_transcript(token, confirmation.confidence))
+            break
+        review = match_review_token(token, pending_confirmation=True)
+        if review is None or (confirmation.confidence is not None and confirmation.confidence < 0.6):
+            events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="Please say yes or cancel; no action was taken."))
+            continue
+        events.extend(handle_transcript(token, confirmation.confidence))
+    if loop.pending_decision is not None:
+        loop.pending_decision = None
+        loop.pending_dictation_history = None
+        events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="Confirmation was not completed. Pending action cancelled; repeat your command to try again."))
+    _print_live_feedback([event for event in events if getattr(event, "phase", None) == VoiceLoopPhase.RECOVERING])
+    payload = _build_payload(
         source="voice",
         events=events,
         logger=logger,
@@ -757,9 +1145,441 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
             "environment": stream_environment.model_dump(mode="json"),
             "live_capture": live_capture,
             "voice_lane": str(args.lane),
+            "confirmation_captures": confirmation_captures,
+            "session_stopped": session_stopped,
             "voice_session_state": loop.state_snapshot(),
             "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
         },
+    )
+    payload.update(
+        _shell_payload(
+            source="voice",
+            events=events,
+            overlay=overlay,
+            environment=stream_environment,
+            mode=lane_mode,
+            session_state=loop.state_snapshot(),
+        )
+    )
+    return payload
+
+
+def _run_voice_eval(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
+    manifest_path = Path(str(args.manifest)).expanduser().resolve() if getattr(args, "manifest", None) else None
+    manifest = VoiceEvalManifest.load(manifest_path) if manifest_path is not None else None
+    return _run_voice_eval_fixture(
+        args,
+        store,
+        audio_path=Path(str(args.audio)).expanduser(),
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
+
+
+def _run_voice_benchmark(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    manifest_paths = discover_voice_eval_manifests(args.fixtures, manifest_glob=str(args.manifest_glob))
+    results: list[dict[str, Any]] = []
+    stop = False
+    for manifest_path in manifest_paths:
+        try:
+            manifest = VoiceEvalManifest.load(manifest_path)
+        except Exception as error:
+            results.append(
+                _voice_benchmark_error_case(
+                    fixture_id=manifest_path.stem,
+                    manifest_path=manifest_path,
+                    lane=_resolve_voice_eval_lane(args, None),
+                    category=None,
+                    tags=[],
+                    error_message=f"Could not load fixture manifest: {error}",
+                )
+            )
+            if args.fail_fast:
+                break
+            continue
+
+        variants = manifest.resolved_variants(manifest_path)
+        if not variants:
+            results.append(
+                _voice_benchmark_error_case(
+                    fixture_id=manifest.resolved_fixture_id(manifest_path),
+                    manifest_path=manifest_path,
+                    lane=_resolve_voice_eval_lane(args, manifest),
+                    category=manifest.category,
+                    tags=list(manifest.tags),
+                    error_message="Fixture manifest does not declare any audio variants.",
+                )
+            )
+            if args.fail_fast:
+                break
+            continue
+
+        for variant in variants:
+            try:
+                payload = _run_voice_eval_fixture(
+                    args,
+                    store,
+                    audio_path=variant.resolved_audio_path(manifest_path),
+                    manifest=manifest,
+                    manifest_path=manifest_path,
+                    variant_id=variant.variant_id,
+                    source_engine=variant.source_engine or manifest.source_engine,
+                    voice_id=variant.voice_id or manifest.voice_id,
+                    speaking_rate=variant.speaking_rate or manifest.speaking_rate,
+                )
+                case = _flatten_voice_benchmark_case(payload)
+            except Exception as error:
+                case = _voice_benchmark_error_case(
+                    fixture_id=manifest.resolved_fixture_id(manifest_path),
+                    manifest_path=manifest_path,
+                    lane=_resolve_voice_eval_lane(args, manifest),
+                    category=manifest.category,
+                    tags=list(manifest.tags),
+                    error_message=str(error),
+                    variant_id=variant.variant_id,
+                    audio_path=variant.resolved_audio_path(manifest_path),
+                    source_engine=variant.source_engine or manifest.source_engine,
+                    voice_id=variant.voice_id or manifest.voice_id,
+                    speaking_rate=variant.speaking_rate or manifest.speaking_rate,
+                )
+            results.append(case)
+            evaluation = case.get("evaluation")
+            if args.fail_fast and not (isinstance(evaluation, dict) and evaluation.get("passed") is True):
+                stop = True
+                break
+        if stop:
+            break
+
+    summary = summarize_voice_benchmark_results(results)
+    return {
+        "source": "voice-benchmark",
+        "fixtures_root": str(Path(str(args.fixtures)).expanduser().resolve()),
+        "manifest_count": len(manifest_paths),
+        "results": results,
+        "summary": summary,
+        "summary_text": render_voice_benchmark_summary(summary),
+        "signal_only": True,
+        "duration_ms": round((time.perf_counter() - started_at) * 1000.0, 2),
+    }
+
+
+def _run_voice_generate_fixtures(args: argparse.Namespace) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    try:
+        results = generate_voice_fixture_corpus(
+            args.fixtures,
+            manifest_glob=str(args.manifest_glob),
+            output_root=str(args.output_root) if getattr(args, "output_root", None) else None,
+            force=bool(args.force),
+        )
+    except VoiceFixtureGenerationError as error:
+        return {
+            "source": "voice-generate-fixtures",
+            "fixtures_root": str(Path(str(args.fixtures)).expanduser().resolve()),
+            "status": "error",
+            "message": str(error),
+            "duration_ms": round((time.perf_counter() - started_at) * 1000.0, 2),
+        }
+
+    status_counts: dict[str, int] = {}
+    for result in results:
+        status = str(result.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    return {
+        "source": "voice-generate-fixtures",
+        "fixtures_root": str(Path(str(args.fixtures)).expanduser().resolve()),
+        "output_root": (
+            str(Path(str(args.output_root)).expanduser().resolve())
+            if getattr(args, "output_root", None)
+            else None
+        ),
+        "results": results,
+        "summary": {
+            "total": len(results),
+            "by_status": dict(sorted(status_counts.items())),
+        },
+        "duration_ms": round((time.perf_counter() - started_at) * 1000.0, 2),
+    }
+
+
+def _run_voice_eval_fixture(
+    args: argparse.Namespace,
+    store: JsonStateStore,
+    *,
+    audio_path: Path,
+    manifest: VoiceEvalManifest | None,
+    manifest_path: Path | None,
+    variant_id: str | None = None,
+    source_engine: str | None = None,
+    voice_id: str | None = None,
+    speaking_rate: int | None = None,
+) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    settings = store.load_settings()
+    resolved_audio_path = audio_path.expanduser().resolve()
+    resolved_lane = _resolve_voice_eval_lane(args, manifest)
+    lane_mode, fallback_to_dictation = _voice_lane_settings(resolved_lane)
+    loop = _build_voice_loop(
+        args,
+        effective_dry_run=True,
+        default_mode=lane_mode,
+        signal_only=True,
+        manifest=manifest,
+    )
+    fixture_id = manifest.resolved_fixture_id(manifest_path) if manifest is not None else resolved_audio_path.stem
+    session_name = _voice_eval_session_name(str(args.session_name), fixture_id, variant_id)
+    logger = SessionLogger(store.paths.next_session_log_path(session_name))
+    overlay = OverlayController()
+    renderer = ConsoleOverlayRenderer()
+    locale = _resolve_voice_eval_locale(args, manifest)
+    environment = _voice_eval_environment(args)
+    provider = MacOSFileSpeechProvider(store.paths, audio_path=str(resolved_audio_path))
+    events: list[object] = []
+    audio_capture: dict[str, Any] | None = None
+    transcription_ms = 0.0
+    signal_ms = 0.0
+    try:
+        transcription_started_at = time.perf_counter()
+        capture = provider.capture_turn(locale=locale)
+    except SpeechCaptureError as error:
+        transcription_ms = round((time.perf_counter() - transcription_started_at) * 1000.0, 2)
+        events.append(
+            VoiceFeedbackEvent(
+                phase=VoiceLoopPhase.RECOVERING,
+                message=error.message,
+            )
+        )
+        events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.IDLE, message="Voice loop is idle."))
+        audio_capture = {
+            "status": "error",
+            "error": error.code,
+            "message": error.message,
+            "payload": error.payload,
+            "audio_path": str(resolved_audio_path),
+        }
+    else:
+        audio_capture = {
+            "status": "success",
+            "mode": "file",
+            "audio_path": str(resolved_audio_path),
+            "transcript": capture.transcript,
+            "confidence": capture.confidence,
+            "locale": capture.locale,
+            "duration_s": capture.duration_s,
+            "provider": capture.provider,
+            "used_on_device": capture.used_on_device,
+            "permission_state": capture.permission_state,
+            "recording_path": capture.recording_path,
+        }
+        transcription_ms = round((time.perf_counter() - transcription_started_at) * 1000.0, 2)
+        signal_started_at = time.perf_counter()
+        events.append(
+            VoiceFeedbackEvent(
+                phase=VoiceLoopPhase.INTERPRETING,
+                transcript=capture.transcript,
+                message="Speech file transcription completed.",
+            )
+        )
+        events.extend(
+            loop.run_text_turn(
+                capture.transcript,
+                environment,
+                final_confidence=capture.confidence,
+                begin_turn=False,
+                mode=lane_mode,
+                fallback_to_dictation=fallback_to_dictation,
+            )
+        )
+        signal_ms = round((time.perf_counter() - signal_started_at) * 1000.0, 2)
+
+    postprocess_started_at = time.perf_counter()
+    signal_summary = summarize_voice_events(events)
+    evaluation = evaluate_voice_manifest(signal_summary, manifest)
+    postprocess_ms = round((time.perf_counter() - postprocess_started_at) * 1000.0, 2)
+    total_ms = round((time.perf_counter() - started_at) * 1000.0, 2)
+    payload = _build_payload(
+        source="voice",
+        events=events,
+        logger=logger,
+        overlay=overlay,
+        renderer=renderer,
+        extra={
+            "settings": _settings_payload(settings, effective_dry_run=True),
+            "interpreter": args.interpreter,
+            "environment": environment.model_dump(mode="json"),
+            "audio_capture": audio_capture,
+            "voice_lane": resolved_lane,
+            "voice_session_state": loop.state_snapshot(),
+            "signal_only": True,
+            "fixture_id": fixture_id,
+            "fixture_category": manifest.category if manifest is not None else None,
+            "fixture_tags": list(manifest.tags) if manifest is not None else [],
+            "fixture_variant_id": variant_id,
+            "fixture_manifest_path": str(manifest_path) if manifest_path is not None else None,
+            "source_engine": source_engine or (manifest.source_engine if manifest is not None else None),
+            "voice_id": voice_id or (manifest.voice_id if manifest is not None else None),
+            "speaking_rate": speaking_rate if speaking_rate is not None else (manifest.speaking_rate if manifest is not None else None),
+            "fixture_manifest": manifest.model_dump(mode="json") if manifest is not None else None,
+            "signal_summary": signal_summary,
+            "evaluation": evaluation,
+            "latency_breakdown_ms": {
+                "transcription_ms": transcription_ms,
+                "signal_ms": signal_ms,
+                "postprocess_ms": postprocess_ms,
+                "total_ms": total_ms,
+            },
+            "duration_ms": total_ms,
+        },
+    )
+    payload.update(
+        _shell_payload(
+            source="voice",
+            events=events,
+            overlay=overlay,
+            environment=environment,
+            mode=lane_mode,
+            session_state=loop.state_snapshot(),
+        )
+    )
+    return payload
+
+
+def _flatten_voice_benchmark_case(payload: dict[str, Any]) -> dict[str, Any]:
+    fixture_manifest = payload.get("fixture_manifest") if isinstance(payload.get("fixture_manifest"), dict) else {}
+    return {
+        "fixture_id": payload.get("fixture_id"),
+        "variant_id": payload.get("fixture_variant_id"),
+        "category": payload.get("fixture_category"),
+        "tags": payload.get("fixture_tags") or [],
+        "lane": payload.get("voice_lane"),
+        "manifest_path": payload.get("fixture_manifest_path"),
+        "source_engine": payload.get("source_engine"),
+        "voice_id": payload.get("voice_id"),
+        "speaking_rate": payload.get("speaking_rate"),
+        "session_log": payload.get("session_log"),
+        "audio_capture": payload.get("audio_capture"),
+        "signal_summary": payload.get("signal_summary"),
+        "evaluation": payload.get("evaluation"),
+        "latency_breakdown_ms": payload.get("latency_breakdown_ms"),
+        "prompt_text": fixture_manifest.get("prompt_text"),
+        "reference_transcript": fixture_manifest.get("reference_transcript"),
+        "reference_output_text": fixture_manifest.get("reference_output_text"),
+        "expected_route": fixture_manifest.get("expected_route"),
+        "expected_action": fixture_manifest.get("expected_action"),
+        "duration_ms": payload.get("duration_ms"),
+    }
+
+
+def _voice_benchmark_error_case(
+    *,
+    fixture_id: str,
+    manifest_path: Path,
+    lane: str,
+    category: str | None,
+    tags: list[str],
+    error_message: str,
+    variant_id: str | None = None,
+    audio_path: Path | None = None,
+    source_engine: str | None = None,
+    voice_id: str | None = None,
+    speaking_rate: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "fixture_id": fixture_id,
+        "variant_id": variant_id,
+        "category": category,
+        "tags": tags,
+        "lane": lane,
+        "manifest_path": str(manifest_path.resolve()),
+        "source_engine": source_engine,
+        "voice_id": voice_id,
+        "speaking_rate": speaking_rate,
+        "audio_capture": {
+            "status": "error",
+            "audio_path": str(audio_path.resolve()) if audio_path is not None else None,
+            "message": error_message,
+        },
+        "signal_summary": {
+            "transcript": None,
+            "message": error_message,
+            "route": None,
+            "proposal": None,
+            "decision": None,
+            "result": None,
+            "signal_only": True,
+        },
+        "latency_breakdown_ms": {
+            "transcription_ms": 0.0,
+            "signal_ms": 0.0,
+            "postprocess_ms": 0.0,
+            "total_ms": 0.0,
+        },
+        "evaluation": {
+            "passed": False,
+            "checks": [
+                {
+                    "name": "fixture_error",
+                    "expected": "successful fixture evaluation",
+                    "actual": error_message,
+                    "passed": False,
+                }
+            ],
+            "tags": list(tags),
+        },
+        "duration_ms": 0.0,
+    }
+
+
+def _resolve_voice_eval_lane(
+    args: argparse.Namespace,
+    manifest: VoiceEvalManifest | None,
+) -> str:
+    explicit_lane = getattr(args, "lane", None)
+    if isinstance(explicit_lane, str) and explicit_lane.strip():
+        return explicit_lane.strip()
+    if manifest is not None and isinstance(manifest.lane, VoiceEvalLane):
+        return manifest.lane.value
+    return "command"
+
+
+def _voice_eval_session_name(base_name: str, fixture_id: str, variant_id: str | None) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", base_name.lower()).strip("-") or "voice-eval"
+    fixture = re.sub(r"[^a-z0-9]+", "-", fixture_id.lower()).strip("-")
+    variant = re.sub(r"[^a-z0-9]+", "-", (variant_id or "").lower()).strip("-")
+    suffix = "-".join(part for part in (fixture, variant) if part)
+    if not suffix:
+        return base
+    return f"{base}-{suffix}"
+
+
+def _resolve_voice_eval_locale(
+    args: argparse.Namespace,
+    manifest: VoiceEvalManifest | None,
+) -> str:
+    explicit_locale = getattr(args, "locale", None)
+    if isinstance(explicit_locale, str) and explicit_locale.strip():
+        return explicit_locale.strip()
+    if manifest is not None and isinstance(manifest.locale, str) and manifest.locale.strip():
+        return manifest.locale.strip()
+    return "en-US"
+
+
+def _voice_eval_environment(args: argparse.Namespace) -> EnvironmentSnapshot:
+    return _annotate_environment_profile(
+        EnvironmentSnapshot(
+            active_app=str(getattr(args, "active_app", "Finder") or "Finder"),
+            active_bundle_id=(
+                str(getattr(args, "active_bundle_id"))
+                if getattr(args, "active_bundle_id", None)
+                else None
+            ),
+            active_window_title=(
+                str(getattr(args, "active_window_title"))
+                if getattr(args, "active_window_title", None)
+                else None
+            ),
+        )
     )
 
 
@@ -780,7 +1600,7 @@ def _perform_live_gaze_calibration(
         seed=args.random_seed,
         rows=max(3, int(getattr(args, "calibration_grid_rows", 3))),
     )
-    interactive_calibration = _is_interactive_calibration_session()
+    interactive_calibration = bool(getattr(args, "interactive", False)) or _is_interactive_calibration_session()
     calibration_visualization = _calibration_visualization_payload(args, interactive=interactive_calibration)
     calibration_quality = None
     point_visualizer = None
@@ -795,6 +1615,15 @@ def _perform_live_gaze_calibration(
         except Exception as error:
             calibration_visualization["status"] = "error"
             calibration_visualization["error"] = str(error)
+            if getattr(args, "interactive", False):
+                message = f"Cannot show calibration dots: {error}. Close other calibration windows and retry."
+                return {
+                    "events": [GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=message)],
+                    "calibration": {"status": "error", "error": "calibration_overlay_unavailable", "message": message},
+                    "calibration_steps": [], "calibration_targets": [],
+                    "calibration_visualization": calibration_visualization,
+                    "calibration_quality": None, "calibration_profile": None, "profile": None,
+                }
 
     try:
         provider.open()
@@ -1914,6 +2743,14 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
     )
     runtime_profile = profile if profile is not None else CalibrationProfile()
     loop.calibration_profile = runtime_profile
+    def cursor_event_sink(event: GazeFeedbackEvent) -> None:
+        logger.record_event("gaze", event)
+        overlay.apply_event("gaze", event)
+        print(f"[gaze] {event.message}", file=sys.stderr, flush=True)
+
+    if gaze_mode == "cursor":
+        for event in [*startup_events, *calibration_events]:
+            cursor_event_sink(event)
     live_event_sink = _build_live_gaze_terminal_logger() if gaze_mode == "cursor-snap-wink" else None
     try:
         provider.open()
@@ -1935,6 +2772,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 point_visualizer=point_visualizer,
                 initial_cursor_point=initial_cursor_point,
                 camera_preview=camera_preview,
+                event_sink=cursor_event_sink,
             )
         elif gaze_mode in {"cursor-relative", "cursor-relative-click"}:
             events, summary = run_live_relative_cursor_follow(
@@ -2016,6 +2854,9 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
             GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=error.message),
             GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."),
         ]
+        if gaze_mode == "cursor":
+            for event in events:
+                cursor_event_sink(event)
         live_gaze = {
             "status": "error",
             "error": error.code,
@@ -2034,6 +2875,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
         events = [*startup_events, *events]
     return _build_payload(
         source="gaze",
+        log_events=gaze_mode != "cursor",
         events=events,
         logger=logger,
         overlay=overlay,
@@ -2515,7 +3357,7 @@ def _run_fusion_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[s
     events.extend(loop.run_voice_turn(args.utterance, environment))
     if args.follow_up:
         events.extend(loop.run_voice_turn(args.follow_up, environment))
-    return _build_payload(
+    payload = _build_payload(
         source="fusion",
         events=events,
         logger=logger,
@@ -2529,6 +3371,17 @@ def _run_fusion_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[s
             "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
         },
     )
+    payload.update(
+        _shell_payload(
+            source="fusion",
+            events=events,
+            overlay=overlay,
+            environment=environment,
+            mode=SessionMode.COMMAND,
+            session_state=loop.state_snapshot(),
+        )
+    )
+    return payload
 
 
 def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
@@ -2739,6 +3592,45 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
         )
     )
 
+    def refresh_target() -> None:
+        nonlocal environment, live_gaze_context
+        print("[fusion] Keep looking at the intended target; checking gaze now.", file=sys.stderr, flush=True)
+        environment = _capture_runtime_environment(fallback_app="Finder", fallback_window="Live Fusion")
+        fresh_provider = _build_webcam_provider(args.tracker, camera_index, tracker_model_path=tracker_model_path)
+        # A failed new capture must never fall back to the previous target.
+        loop.state.gaze_history.clear()
+        loop.state.explicit_candidate_history.clear()
+        target_captured_at: float | None = None
+        try:
+            fresh_provider.open()
+            fresh, fresh_events, summary = capture_live_gaze_context(
+                fresh_provider, profile, frames=args.gaze_frames,
+                delta_ms=args.gaze_delta_ms, targets=default_webcam_targets(),
+            )
+            target_captured_at = time.monotonic()
+            events.extend(fresh_events)
+            if fresh is None:
+                raise WebcamProviderError("missing_gaze_lock", "No stable target found. Look at the intended target and repeat your command.")
+            # AX candidate IDs include the query point. Recheck the proposed point,
+            # while independently verifying that the user's gaze stayed nearby.
+            query_observation = fresh.observation
+            if loop.pending_decision is not None and loop.pending_target is not None and loop.pending_target.candidate is not None:
+                query_observation = loop.pending_observation or fresh.observation
+            candidates, candidate_details = _collect_fusion_candidate_targets(
+                adapter=loop.adapter, observation=query_observation, environment=environment,
+            )
+            events.append(loop.update_gaze_context(fresh.observation, fresh.target, candidate_targets=candidates))
+            live_gaze_context = {**live_gaze_context, "status": "success", "target": fresh.target.model_dump(mode="json"),
+                                 "observation": fresh.observation.model_dump(mode="json"), "candidate_targets": candidate_details,
+                                 "selected_target": (candidates[0] if candidates else fresh.target).model_dump(mode="json")}
+        except WebcamProviderError as error:
+            live_gaze_context = {"status": "error", "error": error.code, "message": error.message}
+            events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
+        finally:
+            fresh_provider.close()
+            if target_captured_at is not None:
+                loop.state.advance(int((time.monotonic() - target_captured_at) * 1000))
+
     speech_provider = MacOSLiveSpeechProvider(store.paths)
     live_capture: dict[str, Any] | None = None
     confirmation_capture: dict[str, Any] | None = None
@@ -2748,6 +3640,8 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             message=f"Starting live macOS speech capture for {args.duration:.1f}s.",
         )
     )
+    print(f"[fusion] Listening for {args.duration:g}s. Keep looking at the intended target.", file=sys.stderr, flush=True)
+    speech_started = time.monotonic()
     try:
         capture = speech_provider.capture_turn(duration_s=args.duration, locale=args.locale)
     except SpeechCaptureError as error:
@@ -2799,6 +3693,8 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             target=gaze_context.target,
         )
     )
+    loop.state.advance(int((time.monotonic() - speech_started) * 1000))
+    refresh_target()
     events.extend(
         loop.run_voice_turn(
             capture.transcript,
@@ -2807,7 +3703,10 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
         )
     )
 
+    _print_live_feedback(events)
     if loop.pending_decision is not None:
+        print(f"[fusion] {loop.pending_decision.confirmation_prompt} Say yes or cancel, then keep looking at the same target.", file=sys.stderr, flush=True)
+        confirmation_started = time.monotonic()
         events.append(
             FusionFeedbackEvent(
                 phase=FusionLoopPhase.CONFIRMING,
@@ -2866,15 +3765,18 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
                 target=gaze_context.target,
             )
         )
-        events.extend(
-            loop.run_voice_turn(
-                confirmation.transcript,
-                environment,
-                final_confidence=confirmation.confidence,
-            )
-        )
+        loop.state.advance(int((time.monotonic() - confirmation_started) * 1000))
+        token = confirmation.transcript.strip().strip(".!?")
+        review = match_review_token(token, pending_confirmation=True)
+        if review is not None and review.kind == VoiceDirectiveType.CONFIRM and (confirmation.confidence is None or confirmation.confidence >= 0.6):
+            refresh_target()
+        elif review is None or (confirmation.confidence is not None and confirmation.confidence < 0.6):
+            token = "cancel"
+            events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="Confirmation was unclear. Pending action cancelled."))
+        events.extend(loop.run_voice_turn(token, environment, final_confidence=confirmation.confidence))
+        _print_live_feedback(events[-4:])
 
-    return _build_payload(
+    payload = _build_payload(
         source="fusion",
         events=events,
         logger=logger,
@@ -2895,6 +3797,17 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             "calibration_profile": _profile_to_payload(profile),
         },
     )
+    payload.update(
+        _shell_payload(
+            source="fusion",
+            events=events,
+            overlay=overlay,
+            environment=environment,
+            mode=SessionMode.COMMAND,
+            session_state=loop.state_snapshot(),
+        )
+    )
+    return payload
 
 
 def _run_replay(args: argparse.Namespace) -> dict[str, Any]:
@@ -2925,11 +3838,13 @@ def _build_payload(
     overlay: OverlayController,
     renderer: ConsoleOverlayRenderer,
     extra: dict[str, Any],
+    log_events: bool = True,
 ) -> dict[str, Any]:
     snapshots: list[dict[str, Any]] = []
     serialized_events: list[dict[str, Any]] = []
     for event in events:
-        logger.record_event(source, event)
+        if log_events:
+            logger.record_event(source, event)
         state = overlay.apply_event(source, event)
         snapshots.append(state.to_dict())
         serialized_events.append(serialize_feedback_event(event))
@@ -2943,6 +3858,53 @@ def _build_payload(
     }
     payload.update(extra)
     return payload
+
+
+def _shell_payload(
+    *,
+    source: str,
+    events: list[object],
+    overlay: OverlayController,
+    environment: EnvironmentSnapshot,
+    mode: SessionMode,
+    session_state: dict[str, object],
+    surface_override: str | None = None,
+    pointer_mode: str = "semantic",
+    selection_label: str | None = None,
+) -> dict[str, Any]:
+    shell_renderer = TerminalShellRenderer()
+    shell_overlay = OverlayController()
+    shell_snapshots: list[dict[str, Any]] = []
+    for event in events:
+        overlay_state = shell_overlay.apply_event(source, event)
+        shell_state = build_shell_view_state(
+            source=source,
+            overlay_state=overlay_state,
+            environment=environment,
+            mode=mode,
+            surface_override=surface_override,
+            pointer_mode=pointer_mode,
+            selection_label=selection_label,
+        )
+        shell_snapshots.append(shell_state.to_dict())
+
+    active_scope_value = session_state.get("active_scope")
+    active_scope = active_scope_value if isinstance(active_scope_value, str) else None
+    final_shell_state = build_shell_view_state(
+        source=source,
+        overlay_state=overlay.state,
+        environment=environment,
+        mode=mode,
+        active_scope=active_scope,
+        surface_override=surface_override,
+        pointer_mode=pointer_mode,
+        selection_label=selection_label,
+    )
+    return {
+        "shell_state": final_shell_state.to_dict(),
+        "shell_snapshots": shell_snapshots,
+        "final_shell_rendered": shell_renderer.render(final_shell_state),
+    }
 
 
 def _build_live_gaze_terminal_logger() -> Any:
@@ -4949,6 +5911,8 @@ def _build_webcam_provider(tracker: str, camera_index: int, *, tracker_model_pat
 
 
 def _effective_dry_run(settings, args: argparse.Namespace) -> bool:
+    if getattr(args, "dry_run", False):
+        return True
     return False if getattr(args, "execute", False) else settings.dry_run
 
 

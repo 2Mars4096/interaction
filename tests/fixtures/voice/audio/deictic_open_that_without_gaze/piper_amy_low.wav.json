@@ -1,0 +1,22 @@
+{
+  "fixture_id": "deictic_open_that_without_gaze",
+  "category": "deictic_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/deictic_open_that_without_gaze.json",
+  "prompt_text": "open that",
+  "reference_transcript": "open that",
+  "source_engine": "piper",
+  "variant_id": "piper_amy_low",
+  "voice_id": "en_US-amy-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "deictic",
+    "clarify",
+    "command"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/deictic_open_that_without_gaze/piper_amy_low.wav",
+  "duration_s": 0.976,
+  "status": "generated"
+}

@@ -1,0 +1,21 @@
+{
+  "fixture_id": "deictic_switch_to_that_app_without_gaze",
+  "category": "deictic_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/deictic_switch_to_that_app_without_gaze.json",
+  "prompt_text": "switch to that app",
+  "reference_transcript": "switch to that app",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "tags": [
+    "deictic",
+    "clarify",
+    "command",
+    "pronoun"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/deictic_switch_to_that_app_without_gaze/piper_lessac_low.wav",
+  "duration_s": 1.024,
+  "status": "generated"
+}

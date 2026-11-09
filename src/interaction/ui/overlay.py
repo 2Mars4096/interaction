@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,10 @@ class OverlayController:
         self.state = OverlayState(source="system", phase="idle", message="No activity yet.")
 
     def apply_event(self, source: str, event: object) -> OverlayState:
+        phase = _enum_value(getattr(event, "phase", "unknown"))
+        if phase == "idle" and self.state.source == source and self.state.phase in {"recovering", "executing", "interpreting"}:
+            self.state = replace(self.state, phase="idle", pending_confirmation=False)
+            return self.state
         decision = getattr(event, "decision", None)
         result = getattr(event, "result", None)
         target = getattr(event, "target", None)

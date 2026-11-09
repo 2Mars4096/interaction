@@ -1,0 +1,22 @@
+{
+  "fixture_id": "negative_explanation_about_opening_safari",
+  "category": "negative_long_form",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/negative_explanation_about_opening_safari.json",
+  "prompt_text": "the article explained how people used to open Safari but it was not asking the computer to do anything",
+  "reference_transcript": null,
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "negative",
+    "long-form",
+    "command"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/negative_explanation_about_opening_safari/piper_lessac_low.wav",
+  "duration_s": 5.344,
+  "status": "generated"
+}

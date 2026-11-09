@@ -48,12 +48,51 @@ def test_voice_loop_open_app_executes_dry_run() -> None:
     assert any(event.result and event.result.details.get("commands") == [["open", "-a", "Safari"]] for event in events)
 
 
+def test_voice_loop_repair_crawl_down_faster_executes_scroll() -> None:
+    loop = VoiceCommandLoop(adapter=MacOSPlatformAdapter(dry_run=True))
+
+    events = loop.run_text_turn("crawl down faster", EnvironmentSnapshot(active_app="Safari"))
+
+    assert any(
+        event.result
+        and event.result.proposal.action.value == "scroll"
+        and event.result.proposal.arguments == {"direction": "down", "speed": "faster"}
+        for event in events
+    )
+
+
 def test_voice_loop_target_dependent_command_clarifies_without_gaze() -> None:
     loop = VoiceCommandLoop(adapter=MacOSPlatformAdapter(dry_run=True))
 
     events = loop.run_text_turn("click this", EnvironmentSnapshot(active_app="Safari"))
 
     assert any(event.phase == VoiceLoopPhase.RECOVERING and event.message for event in events)
+    assert all(event.result is None for event in events)
+
+
+def test_voice_loop_open_it_clarifies_without_gaze() -> None:
+    loop = VoiceCommandLoop(adapter=MacOSPlatformAdapter(dry_run=True))
+
+    events = loop.run_text_turn("open it", EnvironmentSnapshot(active_app="Safari"))
+
+    assert any(
+        event.phase == VoiceLoopPhase.RECOVERING
+        and event.message == "That command needs gaze grounding before I can act on it."
+        for event in events
+    )
+    assert all(event.result is None for event in events)
+
+
+def test_voice_loop_switch_to_that_app_clarifies_without_gaze() -> None:
+    loop = VoiceCommandLoop(adapter=MacOSPlatformAdapter(dry_run=True))
+
+    events = loop.run_text_turn("switch to that app", EnvironmentSnapshot(active_app="Safari"))
+
+    assert any(
+        event.phase == VoiceLoopPhase.RECOVERING
+        and event.message == "That command needs gaze grounding before I can act on it."
+        for event in events
+    )
     assert all(event.result is None for event in events)
 
 

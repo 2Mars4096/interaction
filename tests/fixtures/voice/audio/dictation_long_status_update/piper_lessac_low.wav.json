@@ -1,0 +1,21 @@
+{
+  "fixture_id": "dictation_long_status_update",
+  "category": "dictation_long_form",
+  "lane": "dictation",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/dictation_long_status_update.json",
+  "prompt_text": "hello team this is a longer status update for the benchmark and it should stay in dictation mode rather than becoming a command",
+  "reference_transcript": null,
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "dictation",
+    "long-form"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/dictation_long_status_update/piper_lessac_low.wav",
+  "duration_s": 6.256,
+  "status": "generated"
+}

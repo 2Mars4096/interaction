@@ -1,0 +1,33 @@
+{
+  "fixture_id": "canonical_open_safari",
+  "category": "canonical_command",
+  "prompt_text": "open Safari",
+  "lane": "command",
+  "reference_transcript": "open Safari",
+  "expected_route": "command",
+  "expected_action": "open_app",
+  "expected_arguments": {
+    "app_name": "Safari"
+  },
+  "expected_risk": "L1",
+  "expected_broker_decision": "allow",
+  "tags": [
+    "canonical",
+    "command",
+    "app-launch"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/canonical_open_safari/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/canonical_open_safari/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

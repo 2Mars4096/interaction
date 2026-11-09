@@ -142,6 +142,16 @@ def test_fusion_loop_clarifies_when_grounding_confidence_is_too_low() -> None:
     assert all(event.result is None for event in events)
 
 
+def test_fusion_loop_flick_this_uses_recent_gaze_target() -> None:
+    loop = MultimodalFusionLoop(adapter=MacOSPlatformAdapter(dry_run=True))
+    target = _compose_target()
+    loop.update_gaze_context(GazeObservation(confidence=0.88, x_norm=0.56, y_norm=0.20, fixation_ms=250), target)
+
+    events = loop.run_voice_turn("Flick this", EnvironmentSnapshot(active_app="Mail"))
+
+    assert any(event.phase == FusionLoopPhase.CONFIRMING for event in events)
+
+
 def test_shared_state_candidate_targets_prefer_fresh_explicit_candidates() -> None:
     state = SharedInteractionState(gaze_context_window_ms=500)
     target = _compose_target()

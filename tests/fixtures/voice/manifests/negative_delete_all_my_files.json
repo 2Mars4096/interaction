@@ -1,0 +1,27 @@
+{
+  "fixture_id": "negative_delete_all_my_files",
+  "category": "negative_dangerous_request",
+  "prompt_text": "delete all my files",
+  "lane": "command",
+  "expected_route": "reject",
+  "expected_message_contains": "could not map",
+  "tags": [
+    "negative",
+    "dangerous",
+    "command"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/negative_delete_all_my_files/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/negative_delete_all_my_files/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

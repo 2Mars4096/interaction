@@ -1,0 +1,22 @@
+{
+  "fixture_id": "translation_hello_french",
+  "category": "translation_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/translation_hello_french.json",
+  "prompt_text": "translate hello to French",
+  "reference_transcript": "translate hello to French",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "translation",
+    "command",
+    "multilingual"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/translation_hello_french/piper_lessac_low.wav",
+  "duration_s": 1.632,
+  "status": "generated"
+}

@@ -1,0 +1,30 @@
+{
+  "fixture_id": "dictation_long_status_update",
+  "category": "dictation_long_form",
+  "prompt_text": "hello team this is a longer status update for the benchmark and it should stay in dictation mode rather than becoming a command",
+  "lane": "dictation",
+  "reference_output_text": "Hello team this is a longer status update for the benchmark and it should stay in dictation mode rather than becoming a command",
+  "expected_route": "dictation",
+  "expected_action": "type_text",
+  "expected_risk": "L2",
+  "expected_broker_decision": "allow",
+  "expected_message_contains": "Dictation lane",
+  "tags": [
+    "dictation",
+    "long-form"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/dictation_long_status_update/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/dictation_long_status_update/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

@@ -1563,8 +1563,9 @@ def test_gaze_live_cli_cursor_mode_plans_continuous_move_action(monkeypatch, tmp
     assert payload["live_gaze"]["status"] == "success"
     assert payload["gaze_mode"] == "cursor"
     assert payload["gaze_action"] == "focus_target"
-    assert payload["live_gaze"]["moved_events"] >= 1
-    assert payload["live_gaze"]["moved_events"] + payload["live_gaze"]["held_events"] >= 1
+    assert payload["live_gaze"]["moved_events"] == 0
+    assert payload["live_gaze"]["preview_moves"] >= 1
+    assert payload["live_gaze"]["preview_moves"] + payload["live_gaze"]["held_events"] >= 1
     assert any(
         event["result"]
         and event["result"]["details"]["commands"][0][2] == "interaction.platform.macos_runtime"

@@ -4,11 +4,20 @@
 
 Define when the first tester-facing macOS prototype is ready for a real user trial.
 
+## Core-flow verification (2026-11-07)
+
+- `interaction voice-live --continuous --execute` keeps one command session across capture windows and completes yes/cancel confirmation before continuing.
+- `interaction voice-dictate --continuous --execute` inserts text but blocks automatic deletion/replacement because field/caret ownership is unverified. Use manual edits; preview can still simulate correction plans.
+- `stop listening` prevents further actions and ends at the current capture boundary; Ctrl+C terminates capture. Silence alone does not end a continuous session; permission/provider failures do.
+- Live fusion reacquires gaze after speech and rechecks the proposed target after confirmation. It remains sequential and one-shot.
+- Translation and shell precision controls are not live features. Fixture language responses must not be counted as evidence of production translation quality.
+- Automated regression coverage exercises confirmation, cancellation, changed context, lost gaze, continuous dictation, and execution dispatch with a mocked OS runner. Real microphone recognition, gaze accuracy, and first-user task success still require an observed trial on the target Mac.
+
 ## Current Tester Path
 
 - `interaction voice-live` or `python scripts/phase6_live_voice_smoke.py` for real microphone capture and bounded voice commands; add `--execute` to run approved live actions
 - `interaction voice-live --streaming --lane hybrid` for the first live-audio clause path that can mix commands and dictation in one run
-- `interaction voice-live --streaming --lane dictation` for streaming clause-based dictation with local punctuation formatting, filler cleanup, and recent draft/sentence correction commands
+- `interaction voice-live --streaming --lane dictation` for streaming clause-based dictation with local punctuation formatting and filler cleanup; draft/sentence correction plans are preview-only
 - `interaction voice-dictate` as the shorter tester-facing preset for the streaming dictation lane
 - `interaction gaze-calibrate` or `python scripts/phase7_webcam_calibrate.py` for live webcam calibration
 - `interaction gaze-live` or `python scripts/phase7_live_webcam_smoke.py` for the live webcam gaze path; use `--action cursor|move|click|right-click|double-click|drag` for explicit gaze-only manipulation tests

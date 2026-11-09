@@ -1,0 +1,22 @@
+{
+  "fixture_id": "canonical_press_escape",
+  "category": "canonical_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/canonical_press_escape.json",
+  "prompt_text": "press escape",
+  "reference_transcript": "press escape",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "canonical",
+    "command",
+    "keyboard"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/canonical_press_escape/piper_lessac_low.wav",
+  "duration_s": 0.848,
+  "status": "generated"
+}

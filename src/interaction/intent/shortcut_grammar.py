@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import re
 
 from interaction.contracts import ActionName, ActionProposal, NavigationCommand, NavigationScope, RiskLevel, SessionMode
+from .voice import repair_command_utterance
 
 
 @dataclass(frozen=True)
@@ -16,7 +17,7 @@ class FastPathMatch:
 
 _SAFE_KEYS = {"escape", "tab", "enter", "back"}
 _SCROLL_DIRECTIONS = {"up", "down"}
-_DEICTIC_TOKENS = {"this", "that", "here", "there"}
+_DEICTIC_TOKENS = {"this", "that", "these", "those", "here", "there", "it", "them"}
 _STRUCTURED_COMMANDS = {
     "next": NavigationCommand.NEXT,
     "back": NavigationCommand.BACK,
@@ -53,14 +54,14 @@ def match_fast_path(
     mode: SessionMode = SessionMode.COMMAND,
     active_scope: NavigationScope | None = None,
 ) -> FastPathMatch | None:
-    text = " ".join(utterance.strip().split())
+    text = repair_command_utterance(utterance)
     if not text or mode == SessionMode.DICTATION:
         return None
 
     lowered = text.lower()
     if lowered.startswith("open ") and len(text) > 5:
         app_name = text[5:].strip()
-        if app_name.lower() in _DEICTIC_TOKENS:
+        if _looks_deictic_target(app_name):
             return None
         return _proposal(
             intent_name="open_app",
@@ -69,9 +70,14 @@ def match_fast_path(
             risk=RiskLevel.L1,
             rationale=f'Fast-path shortcut requested opening "{app_name}".',
         )
-    if lowered.startswith("switch ") and len(text) > 7:
-        app_name = text[7:].strip()
-        if app_name.lower() in _DEICTIC_TOKENS:
+    switch_prefix = None
+    if lowered.startswith("switch to ") and len(text) > 10:
+        switch_prefix = "switch to "
+    elif lowered.startswith("switch ") and len(text) > 7:
+        switch_prefix = "switch "
+    if switch_prefix is not None:
+        app_name = text[len(switch_prefix) :].strip()
+        if _looks_deictic_target(app_name):
             return None
         return _proposal(
             intent_name="switch_app",
@@ -172,6 +178,15 @@ def _structured_navigation(
         risk=RiskLevel.L1,
         rationale=f'Fast-path shortcut requested structured navigation "{label}".',
     )
+
+
+def _looks_deictic_target(value: str) -> bool:
+    lowered = " ".join(value.strip().split()).lower()
+    if not lowered:
+        return False
+    if lowered in _DEICTIC_TOKENS:
+        return True
+    return lowered.split(" ", 1)[0] in _DEICTIC_TOKENS
 
 
 def _proposal(

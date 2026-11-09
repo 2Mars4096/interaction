@@ -1,0 +1,39 @@
+{
+  "fixture_id": "canonical_open_safari_pink_noise",
+  "category": "canonical_command_noise",
+  "prompt_text": "open Safari",
+  "lane": "command",
+  "reference_transcript": "open Safari",
+  "expected_route": "command",
+  "expected_action": "open_app",
+  "expected_arguments": {
+    "app_name": "Safari"
+  },
+  "expected_risk": "L1",
+  "expected_broker_decision": "allow",
+  "tags": [
+    "canonical",
+    "command",
+    "app-launch",
+    "noise",
+    "background-noise"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low_pink_noise",
+      "audio_path": "../audio/canonical_open_safari_pink_noise/piper_lessac_low_pink_noise.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low",
+      "background_noise": "pink",
+      "noise_level_db": -32.0
+    },
+    {
+      "variant_id": "piper_amy_low_pink_noise",
+      "audio_path": "../audio/canonical_open_safari_pink_noise/piper_amy_low_pink_noise.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low",
+      "background_noise": "pink",
+      "noise_level_db": -32.0
+    }
+  ]
+}

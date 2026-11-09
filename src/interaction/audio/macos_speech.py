@@ -37,6 +37,8 @@ class MacOSLiveSpeechProvider:
     def ensure_helper(self) -> Path:
         self.paths.ensure()
         binary = self.helper_binary_path
+        if not self.helper_source.is_file():
+            raise SpeechCaptureError("helper_source_missing", "Speech helper source is missing. Reinstall interaction from the project.")
         if binary.exists() and binary.stat().st_mtime >= self.helper_source.stat().st_mtime:
             return binary
         command = [
@@ -50,11 +52,16 @@ class MacOSLiveSpeechProvider:
             "Speech",
             "-framework",
             "AVFoundation",
+            "-framework",
+            "CoreMedia",
             str(self.helper_source),
             "-o",
             str(binary),
         ]
-        completed = self.command_runner(command)
+        try:
+            completed = self.command_runner(command)
+        except OSError as error:
+            raise SpeechCaptureError("helper_build_unavailable", "Cannot start the speech compiler. Install Apple's Command Line Tools with xcode-select --install.") from error
         if completed.returncode != 0:
             raise SpeechCaptureError(
                 "helper_build_failed",
@@ -152,46 +159,56 @@ class MacOSLiveSpeechProvider:
         final_payload: dict[str, object] | None = None
         stderr_lines: list[str] = []
 
-        for raw_line in self._iter_process_lines(getattr(process, "stdout", None)):
-            payload = self._parse_stream_line(raw_line)
-            if payload is None:
-                continue
-            event = str(payload.get("event", "")).strip().lower()
-            if event == "partial":
-                transcript = str(payload.get("transcript", "")).strip()
-                if transcript:
-                    partials.append(transcript)
-                    self._emit_live_event({"event": "partial", "transcript": transcript})
-                continue
-            if event == "clause":
-                transcript = str(payload.get("transcript", "")).strip()
-                if not transcript:
+        try:
+            for raw_line in self._iter_process_lines(getattr(process, "stdout", None)):
+                payload = self._parse_stream_line(raw_line)
+                if payload is None:
                     continue
-                raw_confidence = payload.get("confidence")
-                confidence = float(raw_confidence) if isinstance(raw_confidence, (int, float)) else None
-                clause_index = int(payload.get("clause_index", len(clauses)))
-                clauses.append(
-                    LiveSpeechClause(
-                        transcript=transcript,
-                        confidence=confidence,
-                        clause_index=clause_index,
+                event = str(payload.get("event", "")).strip().lower()
+                if event == "partial":
+                    transcript = str(payload.get("transcript", "")).strip()
+                    if transcript:
+                        partials.append(transcript)
+                        self._emit_live_event({"event": "partial", "transcript": transcript})
+                    continue
+                if event == "clause":
+                    transcript = str(payload.get("transcript", "")).strip()
+                    if not transcript:
+                        continue
+                    raw_confidence = payload.get("confidence")
+                    confidence = float(raw_confidence) if isinstance(raw_confidence, (int, float)) else None
+                    clause_index = int(payload.get("clause_index", len(clauses)))
+                    clauses.append(
+                        LiveSpeechClause(
+                            transcript=transcript,
+                            confidence=confidence,
+                            clause_index=clause_index,
+                        )
                     )
-                )
-                self._emit_live_event(
-                    {
-                        "event": "clause",
-                        "transcript": transcript,
-                        "confidence": confidence if confidence is not None else None,
-                        "clause_index": clause_index,
-                    }
-                )
-                continue
-            if event == "final" or payload.get("status") in {"success", "error"}:
-                final_payload = payload
-                self._emit_live_event(payload)
+                    self._emit_live_event(
+                        {
+                            "event": "clause",
+                            "transcript": transcript,
+                            "confidence": confidence if confidence is not None else None,
+                            "clause_index": clause_index,
+                        }
+                    )
+                    continue
+                if event == "final" or payload.get("status") in {"success", "error"}:
+                    final_payload = payload
+                    self._emit_live_event(payload)
 
-        stderr_lines.extend(self._iter_process_lines(getattr(process, "stderr", None)))
-        returncode = process.wait()
+            stderr_lines.extend(self._iter_process_lines(getattr(process, "stderr", None)))
+            returncode = process.wait()
+        except BaseException:
+            # In particular, Ctrl+C must not leave the microphone helper running.
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise
         if final_payload is None:
             raise SpeechCaptureError(
                 "invalid_helper_output",

@@ -1,0 +1,30 @@
+{
+  "fixture_id": "dictation_fillers_status_update",
+  "category": "dictation_fillers",
+  "prompt_text": "um hello team uh this should still go into the notes field and not trigger a command",
+  "lane": "dictation",
+  "reference_output_text": "Hello team uh this should still go into the notes field and not trigger a command",
+  "expected_route": "dictation",
+  "expected_action": "type_text",
+  "expected_risk": "L2",
+  "expected_broker_decision": "allow",
+  "expected_message_contains": "Dictation lane",
+  "tags": [
+    "dictation",
+    "fillers"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/dictation_fillers_status_update/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/dictation_fillers_status_update/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

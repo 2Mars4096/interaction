@@ -1,0 +1,22 @@
+{
+  "fixture_id": "paraphrase_hit_escape",
+  "category": "paraphrase_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/paraphrase_hit_escape.json",
+  "prompt_text": "hit escape",
+  "reference_transcript": "hit escape",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "paraphrase",
+    "command",
+    "keyboard"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/paraphrase_hit_escape/piper_lessac_low.wav",
+  "duration_s": 0.8,
+  "status": "generated"
+}

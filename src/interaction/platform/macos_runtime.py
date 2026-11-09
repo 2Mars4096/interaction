@@ -21,6 +21,8 @@ def _load_quartz() -> ctypes.CDLL:
     if not library:
         raise RuntimeError("ApplicationServices framework not found")
     quartz = ctypes.cdll.LoadLibrary(library)
+    quartz.AXIsProcessTrusted.argtypes = []
+    quartz.AXIsProcessTrusted.restype = ctypes.c_bool
     quartz.CGEventCreate.restype = ctypes.c_void_p
     quartz.CGEventCreate.argtypes = [ctypes.c_void_p]
     quartz.CGEventGetLocation.restype = CGPoint
@@ -38,6 +40,8 @@ def _load_quartz() -> ctypes.CDLL:
 
 
 def _post_mouse_event(quartz: ctypes.CDLL, event_type: int, point: CGPoint, button: int) -> None:
+    if not quartz.AXIsProcessTrusted():
+        raise PermissionError("Accessibility permission is required for pointer control. Open Privacy & Security > Accessibility, enable the app or Python process, then retry.")
     event = quartz.CGEventCreateMouseEvent(None, event_type, point, button)
     if not event:
         raise RuntimeError("Failed to create Quartz mouse event")

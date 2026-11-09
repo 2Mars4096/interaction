@@ -338,9 +338,18 @@ class VoiceInterpretationRouter:
         source: InterpretationSource,
         modifiers: dict[str, Any] | None = None,
     ) -> VoiceDirective:
+        normalized_modifiers = {"route": VoiceRoute.DICTATION.value, **(modifiers or {})}
+        arguments: dict[str, Any] = {
+            "text": text,
+            "voice_route": normalized_modifiers.get("route", VoiceRoute.DICTATION.value),
+        }
+        if normalized_modifiers.get("target_language") is not None:
+            arguments["target_language"] = normalized_modifiers["target_language"]
+        if normalized_modifiers.get("source_language") is not None:
+            arguments["source_language"] = normalized_modifiers["source_language"]
         proposal = self._validated_proposal(
             action=ActionName.TYPE_TEXT,
-            arguments={"text": text},
+            arguments=arguments,
             confidence=confidence,
             risk=RiskLevel.L2,
             rationale=rationale,
@@ -351,7 +360,7 @@ class VoiceInterpretationRouter:
             intent_name="type_text",
             proposal=proposal,
             source=source,
-            modifiers={"route": VoiceRoute.DICTATION.value, **(modifiers or {})},
+            modifiers=normalized_modifiers,
         )
 
     def _validated_proposal(

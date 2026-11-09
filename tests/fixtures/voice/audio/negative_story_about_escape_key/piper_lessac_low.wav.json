@@ -1,0 +1,22 @@
+{
+  "fixture_id": "negative_story_about_escape_key",
+  "category": "negative_long_form",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/negative_story_about_escape_key.json",
+  "prompt_text": "in the story the narrator kept talking about the escape key but never asked the computer to press it",
+  "reference_transcript": null,
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "negative",
+    "long-form",
+    "command"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/negative_story_about_escape_key/piper_lessac_low.wav",
+  "duration_s": 5.072,
+  "status": "generated"
+}

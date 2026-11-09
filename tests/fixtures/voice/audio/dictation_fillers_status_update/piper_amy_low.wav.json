@@ -1,0 +1,21 @@
+{
+  "fixture_id": "dictation_fillers_status_update",
+  "category": "dictation_fillers",
+  "lane": "dictation",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/dictation_fillers_status_update.json",
+  "prompt_text": "um hello team uh this should still go into the notes field and not trigger a command",
+  "reference_transcript": null,
+  "source_engine": "piper",
+  "variant_id": "piper_amy_low",
+  "voice_id": "en_US-amy-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "dictation",
+    "fillers"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/dictation_fillers_status_update/piper_amy_low.wav",
+  "duration_s": 5.392,
+  "status": "generated"
+}

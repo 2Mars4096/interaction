@@ -8,6 +8,8 @@ import re
 
 from interaction.contracts import ActionName, ActionProposal, NormalizedIntent, RiskLevel
 
+_DEICTIC_TOKENS = {"this", "that", "these", "those", "here", "there", "it", "them"}
+
 
 class VoiceDirectiveType(StrEnum):
     PROPOSAL = "proposal"
@@ -29,6 +31,21 @@ class VoiceDirective:
 
 def normalize_utterance(utterance: str) -> str:
     return " ".join(utterance.strip().split())
+
+
+def repair_command_utterance(utterance: str) -> str:
+    text = normalize_utterance(utterance)
+    if not text:
+        return text
+
+    tokens = text.split(" ")
+    if len(tokens) >= 2 and tokens[0].lower() == "crawl" and tokens[1].lower() in {"up", "down"}:
+        tokens[0] = "scroll"
+        return " ".join(tokens)
+    if len(tokens) >= 2 and tokens[0].lower() == "flick" and tokens[1].lower() in _DEICTIC_TOKENS:
+        tokens[0] = "click"
+        return " ".join(tokens)
+    return text
 
 
 def match_review_token(
@@ -54,7 +71,7 @@ def match_review_token(
 class VoiceIntentInterpreter:
     """Interpret typed or transcribed speech into bounded actions."""
 
-    _DEICTIC_TOKENS = {"this", "that", "here", "there"}
+    _DEICTIC_TOKENS = _DEICTIC_TOKENS
     _COMMAND_PATTERNS = (
         (re.compile(r"^(?:open|launch)\s+(.+)$", re.IGNORECASE), "open_app"),
         (re.compile(r"^(?:switch to|go to)\s+(.+)$", re.IGNORECASE), "switch_app"),
@@ -62,14 +79,21 @@ class VoiceIntentInterpreter:
         (re.compile(r"^scroll\s+(up|down)(?:\s+(faster|slower))?$", re.IGNORECASE), "scroll"),
         (re.compile(r"^(?:type|dictate)\s+(.+)$", re.IGNORECASE), "type_text"),
         (re.compile(r"^translate\s+(.+?)\s+to\s+([a-zA-Z]+)$", re.IGNORECASE), "translate_text"),
-        (re.compile(r"^(?:click|right(?: |-)?click|secondary click|open|focus|move(?: cursor)?|show)\s+(?:this|that|here|there)$", re.IGNORECASE), "deictic"),
+        (
+            re.compile(
+                r"^(?:click|right(?: |-)?click|secondary click|open|focus|move(?: cursor)?|show)\s+"
+                r"(?:this|that|these|those|here|there|it|them)$",
+                re.IGNORECASE,
+            ),
+            "deictic",
+        ),
     )
 
     _CONFIRM_TOKENS = {"yes", "confirm", "do it", "go ahead", "okay", "ok"}
     _CANCEL_TOKENS = {"no", "cancel", "stop", "never mind", "abort", "nope"}
 
     def interpret(self, utterance: str) -> VoiceDirective:
-        text = normalize_utterance(utterance)
+        text = repair_command_utterance(utterance)
         if not text:
             return VoiceDirective(
                 kind=VoiceDirectiveType.CLARIFY,
@@ -104,7 +128,7 @@ class VoiceIntentInterpreter:
     def _proposal_from_match(self, command: str, utterance: str, groups: tuple[str | None, ...]) -> VoiceDirective:
         if command == "open_app":
             app_name = groups[0].strip()
-            if app_name.lower() in self._DEICTIC_TOKENS:
+            if self._looks_deictic_target(app_name):
                 return VoiceDirective(
                     kind=VoiceDirectiveType.CLARIFY,
                     utterance=utterance,
@@ -121,7 +145,7 @@ class VoiceIntentInterpreter:
             )
         if command == "switch_app":
             app_name = groups[0].strip()
-            if app_name.lower() in self._DEICTIC_TOKENS:
+            if self._looks_deictic_target(app_name):
                 return VoiceDirective(
                     kind=VoiceDirectiveType.CLARIFY,
                     utterance=utterance,
@@ -219,3 +243,13 @@ class VoiceIntentInterpreter:
             proposal=proposal,
             source="regex",
         )
+
+    @classmethod
+    def _looks_deictic_target(cls, value: str) -> bool:
+        lowered = normalize_utterance(value).lower()
+        if not lowered:
+            return False
+        if lowered in cls._DEICTIC_TOKENS:
+            return True
+        first_token = lowered.split(" ", 1)[0]
+        return first_token in cls._DEICTIC_TOKENS

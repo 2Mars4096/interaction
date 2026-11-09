@@ -1,0 +1,22 @@
+{
+  "fixture_id": "canonical_scroll_down_faster",
+  "category": "canonical_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/canonical_scroll_down_faster.json",
+  "prompt_text": "scroll down faster",
+  "reference_transcript": "scroll down faster",
+  "source_engine": "piper",
+  "variant_id": "piper_amy_low",
+  "voice_id": "en_US-amy-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "canonical",
+    "command",
+    "scroll"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/canonical_scroll_down_faster/piper_amy_low.wav",
+  "duration_s": 1.616,
+  "status": "generated"
+}

@@ -1,0 +1,22 @@
+{
+  "fixture_id": "ambiguous_open_only",
+  "category": "ambiguous_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/ambiguous_open_only.json",
+  "prompt_text": "open",
+  "reference_transcript": "open",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "ambiguous",
+    "command",
+    "negative"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/ambiguous_open_only/piper_lessac_low.wav",
+  "duration_s": 0.544,
+  "status": "generated"
+}

@@ -4,6 +4,18 @@
 
 Prototype implementation exists through Phase 4. This document now captures both the intended system shape and the concrete modules already in place.
 
+## Native macOS test app
+
+`scripts/macos/Interaction.m` is a native AppKit controller, compiled and ad-hoc signed by `scripts/build_macos_app.py` into `dist/Interaction.app`. The bundle contains an engine snapshot plus paths to the selected local Python and runtime folder. This local build deliberately does not bundle Python or third-party dependencies.
+
+Each Start launches `interaction.desktop_worker` as a separate process/session group. The worker translates a fixed mode into CLI arguments, streams feedback, and reports nested capture/execution failures. Stop, quit, and the registered Command–Shift–Escape shortcut interrupt the group and escalate shutdown if needed. The UI never starts device capture during setup checks. Preview passes an explicit `--dry-run` override; interactive calibration requires a visible overlay.
+
+## Core session implementation (2026-11-07)
+
+`python -m interaction` and the installed `interaction` command share the CLI. Voice continuous mode reuses one `VoiceCommandLoop` across capture windows, retaining dictation history and scope while using monotonic elapsed time for live state. It refreshes frontmost context per clause, cancels pending confirmation on context changes, and clears correction history across windows. Each window has its own session log.
+
+Live fusion remains sequential: capture gaze, capture speech, reacquire gaze, interpret, capture confirmation, then recheck gaze and the proposed desktop point before execution. The runtime rejects expired/moved targets and changed app/window context. The overlay retains the last outcome through idle transitions. Native speech source is included as package data and compiled locally on first use.
+
 ## Working Assumptions
 
 - **Core language:** Python 3.11+
@@ -132,3 +144,7 @@ src/interaction/
 - `scripts/phase5_productization_smoke.py` is the repo-local smoke wrapper for the Phase 5 CLI.
 - `scripts/phase6_live_voice_smoke.py` is the repo-local smoke wrapper for the live macOS voice path.
 - `scripts/phase7_webcam_calibrate.py` and `scripts/phase7_live_webcam_smoke.py` are the repo-local wrappers for the webcam calibration and live-gaze tester paths.
+
+## Audit hardening (2026-11-08)
+
+Live text deletion/replacement is blocked in both voice runtime and macOS adapter until field/caret ownership can be verified. Normal insertion remains available. Cursor follow emits throttled status through an event sink, keeps at most 256 recent events in memory, writes emitted events incrementally to JSONL, and skips duplicate final logging. Failures terminate control immediately; interruption returns a stopped summary after recording cancellation. Preview and actual movement counters are separate. Quartz pointer posting checks Accessibility trust first.

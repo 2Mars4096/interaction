@@ -1,0 +1,39 @@
+{
+  "fixture_id": "canonical_press_escape_pink_noise",
+  "category": "canonical_command_noise",
+  "prompt_text": "press escape",
+  "lane": "command",
+  "reference_transcript": "press escape",
+  "expected_route": "command",
+  "expected_action": "press_key",
+  "expected_arguments": {
+    "key": "escape"
+  },
+  "expected_risk": "L1",
+  "expected_broker_decision": "allow",
+  "tags": [
+    "canonical",
+    "command",
+    "keyboard",
+    "noise",
+    "background-noise"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low_pink_noise",
+      "audio_path": "../audio/canonical_press_escape_pink_noise/piper_lessac_low_pink_noise.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low",
+      "background_noise": "pink",
+      "noise_level_db": -32.0
+    },
+    {
+      "variant_id": "piper_amy_low_pink_noise",
+      "audio_path": "../audio/canonical_press_escape_pink_noise/piper_amy_low_pink_noise.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low",
+      "background_noise": "pink",
+      "noise_level_db": -32.0
+    }
+  ]
+}

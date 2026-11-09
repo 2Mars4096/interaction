@@ -1,0 +1,33 @@
+{
+  "fixture_id": "paraphrase_hit_escape",
+  "category": "paraphrase_command",
+  "prompt_text": "hit escape",
+  "lane": "command",
+  "reference_transcript": "hit escape",
+  "expected_route": "command",
+  "expected_action": "press_key",
+  "expected_arguments": {
+    "key": "escape"
+  },
+  "expected_risk": "L1",
+  "expected_broker_decision": "allow",
+  "tags": [
+    "paraphrase",
+    "command",
+    "keyboard"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/paraphrase_hit_escape/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/paraphrase_hit_escape/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

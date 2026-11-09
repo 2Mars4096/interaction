@@ -1,0 +1,29 @@
+{
+  "fixture_id": "negative_story_about_translation_example",
+  "category": "negative_translation_mention",
+  "prompt_text": "the tutorial said translate hello to French as an example but I am not asking you to do that",
+  "lane": "command",
+  "reference_transcript": "the tutorial said translate hello to French as an example but I am not asking you to do that",
+  "expected_route": "reject",
+  "expected_message_contains": "could not map",
+  "tags": [
+    "negative",
+    "long-form",
+    "translation-mention",
+    "command"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/negative_story_about_translation_example/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/negative_story_about_translation_example/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

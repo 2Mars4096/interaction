@@ -1,0 +1,106 @@
+{
+  "budget_id": "phase9-signal-only",
+  "description": "Advisory regression budget for the offline signal-only voice benchmark.",
+  "checks": [
+    {
+      "name": "pass_rate",
+      "path": "pass_rate",
+      "min": 1.0,
+      "notes": "All interaction fixtures should keep passing end to end."
+    },
+    {
+      "name": "word_error_rate",
+      "path": "metrics.word_error_rate.wer",
+      "max": 0.05,
+      "min_samples": 20,
+      "samples_path": "metrics.word_error_rate.samples",
+      "notes": "ASR drift above 5% WER is a meaningful regression for this corpus."
+    },
+    {
+      "name": "command_recognition_rate",
+      "path": "metrics.command_recognition_rate.pass_rate",
+      "min": 1.0,
+      "min_samples": 1,
+      "samples_path": "metrics.command_recognition_rate.eligible"
+    },
+    {
+      "name": "natural_variation_score",
+      "path": "metrics.natural_variation_score.pass_rate",
+      "min": 1.0,
+      "min_samples": 1,
+      "samples_path": "metrics.natural_variation_score.eligible"
+    },
+    {
+      "name": "deictic_clarification_rate",
+      "path": "metrics.deictic_clarification_rate.pass_rate",
+      "min": 1.0,
+      "min_samples": 1,
+      "samples_path": "metrics.deictic_clarification_rate.eligible"
+    },
+    {
+      "name": "dictation_success_rate",
+      "path": "metrics.dictation_success_rate.pass_rate",
+      "min": 1.0,
+      "min_samples": 1,
+      "samples_path": "metrics.dictation_success_rate.eligible"
+    },
+    {
+      "name": "translation_success_rate",
+      "path": "metrics.translation_success_rate.pass_rate",
+      "min": 1.0,
+      "min_samples": 1,
+      "samples_path": "metrics.translation_success_rate.eligible",
+      "notes": "Evaluated when the selected corpus includes translation fixtures."
+    },
+    {
+      "name": "translation_variation_score",
+      "path": "metrics.translation_variation_score.pass_rate",
+      "min": 1.0,
+      "min_samples": 1,
+      "samples_path": "metrics.translation_variation_score.eligible",
+      "notes": "Evaluated when the selected corpus includes paraphrased translation fixtures."
+    },
+    {
+      "name": "false_positive_rate",
+      "path": "metrics.false_positive_rate.rate",
+      "max": 0.0,
+      "min_samples": 1,
+      "samples_path": "metrics.false_positive_rate.eligible"
+    },
+    {
+      "name": "dictation_text_accuracy",
+      "path": "metrics.dictation_text_accuracy.accuracy",
+      "min": 0.9,
+      "min_samples": 1,
+      "notes": "Measured, but kept separate from fixture interaction pass/fail."
+    },
+    {
+      "name": "translation_text_accuracy",
+      "path": "metrics.translation_text_accuracy.accuracy",
+      "min": 0.85,
+      "min_samples": 1,
+      "notes": "Evaluated when the selected corpus includes translation fixtures."
+    },
+    {
+      "name": "latency_median_ms",
+      "path": "metrics.latency_ms.median",
+      "max": 400.0,
+      "min_samples": 10,
+      "samples_path": "metrics.latency_ms.samples"
+    },
+    {
+      "name": "latency_p95_ms",
+      "path": "metrics.latency_ms.p95",
+      "max": 500.0,
+      "min_samples": 10,
+      "samples_path": "metrics.latency_ms.samples"
+    },
+    {
+      "name": "latency_max_ms",
+      "path": "metrics.latency_ms.max",
+      "max": 750.0,
+      "min_samples": 10,
+      "samples_path": "metrics.latency_ms.samples"
+    }
+  ]
+}

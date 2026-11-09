@@ -70,6 +70,13 @@ class MacOSPlatformAdapter(PlatformAdapter):
         self.profile_registry = profile_registry or DEFAULT_MACOS_PROFILE_REGISTRY
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        if (not self.dry_run and request.proposal.action == ActionName.TYPE_TEXT
+                and int(request.proposal.arguments.get("delete_characters", 0) or 0) > 0):
+            return ExecutionResult(
+                status=ExecutionStatus.BLOCKED,
+                message="Automatic text correction is disabled because the current field and caret cannot be verified. Edit the text manually.",
+                proposal=request.proposal, details={"dry_run": False, "reason": "unverified_text_ownership"},
+            )
         plan_details: dict[str, Any] = {}
         blocked_message: str | None = None
         if request.proposal.action == ActionName.NAVIGATE_STRUCTURE:

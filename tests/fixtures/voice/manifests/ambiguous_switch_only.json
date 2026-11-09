@@ -1,0 +1,28 @@
+{
+  "fixture_id": "ambiguous_switch_only",
+  "category": "ambiguous_command",
+  "prompt_text": "switch",
+  "lane": "command",
+  "reference_transcript": "switch",
+  "expected_route": "reject",
+  "expected_message_contains": "could not map",
+  "tags": [
+    "ambiguous",
+    "command",
+    "negative"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/ambiguous_switch_only/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/ambiguous_switch_only/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

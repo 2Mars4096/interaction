@@ -1,0 +1,45 @@
+{
+  "fixture_id": "translation_hello_french",
+  "category": "translation_command",
+  "prompt_text": "translate hello to French",
+  "lane": "command",
+  "reference_transcript": "translate hello to French",
+  "reference_output_text": "bonjour",
+  "gemma_response": {
+    "route": "translation",
+    "confidence": 0.93,
+    "translated_text": "bonjour",
+    "target_language": "French",
+    "source_language": "English",
+    "rationale": "Fixture backend translated hello into French for insertion."
+  },
+  "expected_route": "translation",
+  "expected_action": "type_text",
+  "expected_arguments": {
+    "text": "bonjour",
+    "voice_route": "translation",
+    "target_language": "French",
+    "source_language": "English"
+  },
+  "expected_risk": "L2",
+  "expected_broker_decision": "confirm",
+  "tags": [
+    "translation",
+    "command",
+    "multilingual"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/translation_hello_french/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/translation_hello_french/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

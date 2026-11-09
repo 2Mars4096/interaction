@@ -113,6 +113,19 @@ static BOOL RecordAudioToURL(NSURL *url, NSTimeInterval duration, NSError **erro
     return YES;
 }
 
+static NSTimeInterval AudioDurationSeconds(NSURL *url) {
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+    CMTime duration = asset.duration;
+    if (CMTIME_IS_INVALID(duration) || CMTIME_IS_INDEFINITE(duration)) {
+        return 0.0;
+    }
+    Float64 seconds = CMTimeGetSeconds(duration);
+    if (!isfinite(seconds) || seconds < 0.0) {
+        return 0.0;
+    }
+    return seconds;
+}
+
 static float AverageConfidence(SFTranscription *transcription) {
     if (transcription.segments.count == 0) {
         return -1.0f;
@@ -159,7 +172,7 @@ static NSString *JoinedSegmentText(SFTranscription *transcription, NSInteger sta
     return [parts componentsJoinedByString:@" "];
 }
 
-static NSDictionary *TranscribeRecording(NSURL *url, NSString *localeIdentifier, NSTimeInterval durationSeconds, NSString *recordingPath) {
+static NSDictionary *TranscribeRecording(NSURL *url, NSString *localeIdentifier, NSTimeInterval durationSeconds, NSString *recordingPath, NSString *providerName) {
     NSLocale *locale = [[NSLocale alloc] initWithLocaleIdentifier:localeIdentifier];
     SFSpeechRecognizer *recognizer = [[SFSpeechRecognizer alloc] initWithLocale:locale];
     if (recognizer == nil) {
@@ -232,7 +245,7 @@ static NSDictionary *TranscribeRecording(NSURL *url, NSString *localeIdentifier,
 
     NSMutableDictionary *payload = [@{
         @"status" : @"success",
-        @"provider" : @"macos_speech",
+        @"provider" : providerName ?: @"macos_speech",
         @"transcript" : bestTranscript,
         @"locale" : localeIdentifier,
         @"duration_s" : @(durationSeconds),
@@ -499,6 +512,7 @@ int main(int argc, const char *argv[]) {
         BOOL streamingMode = NO;
         NSInteger pauseMs = 700;
         NSString *recordingPath = nil;
+        NSString *audioFilePath = nil;
 
         for (int index = 1; index < argc; index++) {
             NSString *argument = [NSString stringWithUTF8String:argv[index]];
@@ -522,9 +536,21 @@ int main(int argc, const char *argv[]) {
                 recordingPath = [NSString stringWithUTF8String:argv[++index]];
                 continue;
             }
+            if ([argument isEqualToString:@"--audio-file"] && index + 1 < argc) {
+                audioFilePath = [NSString stringWithUTF8String:argv[++index]];
+                continue;
+            }
         }
 
-        if (!RequestMicrophoneAccess()) {
+        if (audioFilePath.length > 0 && streamingMode) {
+            PrintJSONAndExit(@{
+                @"status" : @"error",
+                @"error" : @"unsupported_mode",
+                @"message" : @"Streaming transcription is not supported for prerecorded audio files.",
+            }, 1);
+        }
+
+        if (audioFilePath.length == 0 && !RequestMicrophoneAccess()) {
             PrintJSONAndExit(@{
                 @"status" : @"error",
                 @"error" : @"microphone_denied",
@@ -552,6 +578,21 @@ int main(int argc, const char *argv[]) {
         NSDictionary *payload = nil;
         if (streamingMode) {
             payload = CaptureStreamingSpeech(localeIdentifier, durationSeconds, pauseMs, recordingPath);
+        } else if (audioFilePath.length > 0) {
+            NSURL *audioURL = [NSURL fileURLWithPath:audioFilePath];
+            if (![[NSFileManager defaultManager] fileExistsAtPath:audioFilePath]) {
+                PrintJSONAndExit(@{
+                    @"status" : @"error",
+                    @"error" : @"audio_file_missing",
+                    @"message" : @"The requested audio file does not exist.",
+                    @"recording_path" : audioFilePath,
+                }, 1);
+            }
+            NSTimeInterval resolvedDuration = AudioDurationSeconds(audioURL);
+            if (!(resolvedDuration > 0.0)) {
+                resolvedDuration = durationSeconds;
+            }
+            payload = TranscribeRecording(audioURL, localeIdentifier, resolvedDuration, audioFilePath, @"macos_file_speech");
         } else {
             BOOL preserveRecording = recordingPath.length > 0;
             NSString *resolvedRecordingPath = recordingPath;
@@ -574,7 +615,7 @@ int main(int argc, const char *argv[]) {
                 }, 1);
             }
 
-            payload = TranscribeRecording(recordingURL, localeIdentifier, durationSeconds, preserveRecording ? resolvedRecordingPath : nil);
+            payload = TranscribeRecording(recordingURL, localeIdentifier, durationSeconds, preserveRecording ? resolvedRecordingPath : nil, @"macos_speech");
             if (!preserveRecording) {
                 [[NSFileManager defaultManager] removeItemAtURL:recordingURL error:nil];
             }

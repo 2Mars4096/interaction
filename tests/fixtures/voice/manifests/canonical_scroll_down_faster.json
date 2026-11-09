@@ -1,0 +1,34 @@
+{
+  "fixture_id": "canonical_scroll_down_faster",
+  "category": "canonical_command",
+  "prompt_text": "scroll down faster",
+  "lane": "command",
+  "reference_transcript": "scroll down faster",
+  "expected_route": "command",
+  "expected_action": "scroll",
+  "expected_arguments": {
+    "direction": "down",
+    "speed": "faster"
+  },
+  "expected_risk": "L1",
+  "expected_broker_decision": "allow",
+  "tags": [
+    "canonical",
+    "command",
+    "scroll"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/canonical_scroll_down_faster/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/canonical_scroll_down_faster/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

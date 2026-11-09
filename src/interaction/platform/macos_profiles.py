@@ -413,6 +413,93 @@ CHROME_CHROMIUM_PROFILE = MacOSAppProfile(
     ),
 )
 
+SAFARI_PROFILE = MacOSAppProfile(
+    profile_id="safari_browser_family",
+    display_name="Safari",
+    match=AppMatchRule(
+        bundle_ids=("com.apple.Safari",),
+        app_names=("Safari",),
+    ),
+    bindings=(
+        NavigationBinding(
+            scope=NavigationScope.TAB,
+            command=NavigationCommand.NEXT,
+            presses=(
+                ShortcutPress(
+                    keystroke="]",
+                    modifiers=(ShortcutModifier.COMMAND, ShortcutModifier.SHIFT),
+                ),
+            ),
+        ),
+        NavigationBinding(
+            scope=NavigationScope.TAB,
+            command=NavigationCommand.BACK,
+            presses=(
+                ShortcutPress(
+                    keystroke="[",
+                    modifiers=(ShortcutModifier.COMMAND, ShortcutModifier.SHIFT),
+                ),
+            ),
+        ),
+        NavigationBinding(
+            scope=NavigationScope.TAB,
+            command=NavigationCommand.NEW,
+            presses=(
+                ShortcutPress(
+                    keystroke="t",
+                    modifiers=(ShortcutModifier.COMMAND,),
+                ),
+            ),
+        ),
+        NavigationBinding(
+            scope=NavigationScope.TAB,
+            command=NavigationCommand.CLOSE,
+            presses=(
+                ShortcutPress(
+                    keystroke="w",
+                    modifiers=(ShortcutModifier.COMMAND,),
+                ),
+            ),
+        ),
+        NavigationBinding(
+            scope=NavigationScope.TAB,
+            command=NavigationCommand.REOPEN,
+            presses=(
+                ShortcutPress(
+                    keystroke="t",
+                    modifiers=(ShortcutModifier.COMMAND, ShortcutModifier.SHIFT),
+                ),
+            ),
+        ),
+        NavigationBinding(
+            scope=NavigationScope.TAB,
+            command=NavigationCommand.INDEX,
+            supported_indexes=(1, 2, 3, 4, 5, 6, 7, 8, 9),
+            index_modifiers=(ShortcutModifier.COMMAND,),
+        ),
+        NavigationBinding(
+            scope=NavigationScope.WINDOW,
+            command=NavigationCommand.NEW,
+            presses=(
+                ShortcutPress(
+                    keystroke="n",
+                    modifiers=(ShortcutModifier.COMMAND,),
+                ),
+            ),
+        ),
+    ),
+)
+
+NOTES_PROFILE = MacOSAppProfile(
+    profile_id="notes_family",
+    display_name="Notes",
+    match=AppMatchRule(
+        bundle_ids=("com.apple.Notes",),
+        app_names=("Notes",),
+    ),
+    bindings=(),
+)
+
 FINDER_PROFILE = MacOSAppProfile(
     profile_id="finder_family",
     display_name="Finder",
@@ -708,6 +795,8 @@ DEFAULT_MACOS_PROFILE_REGISTRY = MacOSProfileRegistry(
     global_profile=GLOBAL_MACOS_PROFILE,
     app_profiles=(
         CHROME_CHROMIUM_PROFILE,
+        SAFARI_PROFILE,
+        NOTES_PROFILE,
         FINDER_PROFILE,
         MAIL_PROFILE,
         TERMINAL_FAMILY_PROFILE,

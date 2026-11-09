@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import re
 
 from interaction.contracts import ActionName, ActionProposal, GazeObservation, GroundedTarget, NormalizedIntent, RiskLevel
+from .voice import repair_command_utterance
 
 
 _DEICTIC_PATTERNS = (
@@ -40,7 +41,7 @@ class FusionIntentResolver:
         stale_reason: str | None = None,
         candidate_targets: list[GroundedTarget] | None = None,
     ) -> FusionResolution:
-        text = " ".join(utterance.strip().split())
+        text = repair_command_utterance(utterance)
         for pattern, action, risk in _DEICTIC_PATTERNS:
             if not pattern.match(text):
                 continue

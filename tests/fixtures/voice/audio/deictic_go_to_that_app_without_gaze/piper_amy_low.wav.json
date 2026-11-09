@@ -1,0 +1,23 @@
+{
+  "fixture_id": "deictic_go_to_that_app_without_gaze",
+  "category": "deictic_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/deictic_go_to_that_app_without_gaze.json",
+  "prompt_text": "go to that app",
+  "reference_transcript": "go to that app",
+  "source_engine": "piper",
+  "variant_id": "piper_amy_low",
+  "voice_id": "en_US-amy-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "deictic",
+    "clarify",
+    "command",
+    "pronoun"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/deictic_go_to_that_app_without_gaze/piper_amy_low.wav",
+  "duration_s": 1.168,
+  "status": "generated"
+}

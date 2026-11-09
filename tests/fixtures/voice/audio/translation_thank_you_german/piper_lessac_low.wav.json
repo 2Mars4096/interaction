@@ -1,0 +1,22 @@
+{
+  "fixture_id": "translation_thank_you_german",
+  "category": "translation_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/translation_thank_you_german.json",
+  "prompt_text": "translate thank you to German",
+  "reference_transcript": "translate thank you to German",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "translation",
+    "command",
+    "multilingual"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/translation_thank_you_german/piper_lessac_low.wav",
+  "duration_s": 1.904,
+  "status": "generated"
+}

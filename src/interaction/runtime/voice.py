@@ -8,6 +8,7 @@ from interaction.contracts import (
     ActionProposal,
     BrokerDecisionType,
     EnvironmentSnapshot,
+    ExecutionResult,
     ExecutionStatus,
     NavigationScope,
     RiskLevel,
@@ -43,6 +44,7 @@ class VoiceCommandLoop:
         transcriber: ScriptedTranscriber | None = None,
         state: SharedInteractionState | None = None,
         default_mode: SessionMode = SessionMode.COMMAND,
+        signal_only: bool = False,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
@@ -53,6 +55,7 @@ class VoiceCommandLoop:
         self.transcriber = transcriber or ScriptedTranscriber()
         self.state = state or SharedInteractionState()
         self.default_mode = default_mode
+        self.signal_only = signal_only
         self.turn_manager = PushToTalkTurnManager()
         self.pending_decision = None
         self.dictated_clause_history: list[str] = []
@@ -377,6 +380,14 @@ class VoiceCommandLoop:
                 )
                 events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.IDLE, message="Voice loop is idle."))
                 return events
+            if not getattr(self.adapter, "dry_run", False):
+                self.dictated_clause_history.clear()
+                self.pending_dictation_history = None
+                self.turn_manager.reset()
+                return [VoiceFeedbackEvent(
+                    phase=VoiceLoopPhase.RECOVERING, transcript=normalized_text,
+                    message="Automatic text correction is disabled because the current field and caret cannot be verified. Edit the text manually.",
+                ), VoiceFeedbackEvent(phase=VoiceLoopPhase.IDLE, message="Voice loop is idle.")]
             proposal = ActionProposal(
                 action=ActionName.TYPE_TEXT,
                 arguments={
@@ -531,7 +542,13 @@ class VoiceCommandLoop:
         if next_history is None:
             return
         for event in execution_events:
-            if event.result is not None and event.result.status == "success":
+            if event.result is not None and (
+                event.result.status == "success"
+                or (
+                    event.result.status == ExecutionStatus.BLOCKED
+                    and event.result.details.get("signal_only") is True
+                )
+            ):
                 self.dictated_clause_history = list(next_history)
                 return
 
@@ -547,6 +564,26 @@ class VoiceCommandLoop:
         return f" {normalized_text}"
 
     def _execute_allow_decision(self, decision, environment: EnvironmentSnapshot) -> list[VoiceFeedbackEvent]:
+        if self.signal_only:
+            self._remember_successful_action(decision.proposal)
+            return [
+                VoiceFeedbackEvent(
+                    phase=VoiceLoopPhase.EXECUTING,
+                    message=decision.reason,
+                    decision=decision,
+                ),
+                VoiceFeedbackEvent(
+                    phase=VoiceLoopPhase.EXECUTING,
+                    message="Signal-only mode skipped platform execution.",
+                    decision=decision,
+                    result=ExecutionResult(
+                        status=ExecutionStatus.BLOCKED,
+                        message="Signal-only mode skipped platform execution.",
+                        proposal=decision.proposal,
+                        details={"signal_only": True},
+                    ),
+                ),
+            ]
         request = self.broker.build_execution_request(decision, environment)
         result = self.adapter.execute(request)
         if result.status == ExecutionStatus.SUCCESS:

@@ -1,0 +1,46 @@
+{
+  "fixture_id": "paraphrase_how_do_you_say_hello_in_french",
+  "category": "translation_paraphrase",
+  "prompt_text": "how do you say hello in French",
+  "lane": "command",
+  "reference_transcript": "how do you say hello in French",
+  "reference_output_text": "bonjour",
+  "gemma_response": {
+    "route": "translation",
+    "confidence": 0.93,
+    "translated_text": "bonjour",
+    "target_language": "French",
+    "source_language": "English",
+    "rationale": "Fixture backend normalized a natural-language translation request into French text insertion."
+  },
+  "expected_route": "translation",
+  "expected_action": "type_text",
+  "expected_arguments": {
+    "text": "bonjour",
+    "voice_route": "translation",
+    "target_language": "French",
+    "source_language": "English"
+  },
+  "expected_risk": "L2",
+  "expected_broker_decision": "confirm",
+  "tags": [
+    "translation",
+    "paraphrase",
+    "command",
+    "multilingual"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/paraphrase_how_do_you_say_hello_in_french/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/paraphrase_how_do_you_say_hello_in_french/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

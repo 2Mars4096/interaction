@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 from collections.abc import Callable
 import math
 import time
 from typing import Any
 
-from interaction.contracts import ActionName, ActionProposal, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
+from interaction.contracts import ActionName, ActionProposal, EnvironmentSnapshot, ExecutionStatus, GazeObservation, GroundedTarget, RiskLevel
 from interaction.control import CommandBroker
 from interaction.feedback import GazeFeedbackEvent, GazeLoopPhase
 from interaction.platform import PlatformAdapter, current_position_normalized
@@ -325,7 +325,8 @@ def run_live_cursor_follow(
     point_visualizer: Any | None = None,
     initial_cursor_point: tuple[float, float] | None = None,
     camera_preview: Any | None = None,
-) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
+    event_sink: Callable[[GazeFeedbackEvent], None] | None = None,
+) -> tuple[list[GazeFeedbackEvent], dict[str, Any]]:
     if environment is None:
         environment = EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera")
     if targets is None:
@@ -346,7 +347,27 @@ def run_live_cursor_follow(
     if initial_cursor_point is not None:
         cursor.dispatched_point = anchor_point
 
-    events: list[GazeFeedbackEvent] = []
+    events: deque[GazeFeedbackEvent] = deque(maxlen=256)
+    last_emitted_at = float("-inf")
+    last_phase = None
+    last_message = None
+
+    def emit(event: GazeFeedbackEvent) -> None:
+        nonlocal last_emitted_at, last_phase, last_message
+        now = time.monotonic()
+        urgent = (event.result is not None and event.result.status != ExecutionStatus.SUCCESS)
+        changed_recovery = event.phase == GazeLoopPhase.RECOVERING and event.message != last_message
+        if urgent or changed_recovery or event.phase != last_phase or now - last_emitted_at >= 1.0 or event.phase == GazeLoopPhase.IDLE:
+            events.append(event)
+            if event_sink is not None:
+                event_sink(event)
+            last_emitted_at, last_phase, last_message = now, event.phase, event.message
+
+    attempted_moves = 0
+    failed_moves = 0
+    preview_moves = 0
+    stopped = False
+    attempted_frames = 0
     successful_readings = 0
     missing_readings = 0
     moved_events = 0
@@ -361,126 +382,148 @@ def run_live_cursor_follow(
     if point_visualizer is not None and cursor.dispatched_point is not None:
         _show_point_visualizer(point_visualizer, cursor.dispatched_point[0], cursor.dispatched_point[1])
 
-    for _ in range(frames):
-        reading = provider.read(delta_ms=delta_ms)
-        if reading is None:
-            missing_readings += 1
-            _hide_point_visualizer(point_visualizer)
-            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
-            continue
+    try:
+        for _ in range(frames):
+            attempted_frames += 1
+            reading = provider.read(delta_ms=delta_ms)
+            if reading is None:
+                missing_readings += 1
+                _hide_point_visualizer(point_visualizer)
+                emit(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
+                continue
 
-        successful_readings += 1
-        unbiased_point = _compress_point_around_anchor(
-            profile.apply(reading.sample.point),
-            anchor_point=anchor_point,
-            gain_x=response_gain_x,
-            gain_y=response_gain_y,
-            edge_padding=edge_padding,
-        )
-        corrected_point = bias_corrector.apply((unbiased_point.x, unbiased_point.y), edge_padding=edge_padding)
-        observation = smoother.smooth(
-            GazeSample(
-                point=NormalizedPoint(*corrected_point),
-                confidence=reading.sample.confidence,
-                delta_ms=reading.sample.delta_ms,
+            successful_readings += 1
+            unbiased_point = _compress_point_around_anchor(
+                profile.apply(reading.sample.point),
+                anchor_point=anchor_point,
+                gain_x=response_gain_x,
+                gain_y=response_gain_y,
+                edge_padding=edge_padding,
             )
-        )
-        target = inferencer.infer(observation, targets)
-        sample_delta_ms = max(0, reading.sample.delta_ms)
-        fixation_points, fixation_elapsed_ms = _update_fixation_window(
-            fixation_points,
-            corrected_point,
-            sample_delta_ms,
-            radius=fixation_radius,
-        )
-        if observation.confidence < min_confidence or observation.x_norm is None or observation.y_norm is None:
-            low_confidence_readings += 1
-            fixation_points = []
-            fixation_elapsed_ms = 0
-            events.append(
-                GazeFeedbackEvent(
-                    phase=GazeLoopPhase.RECOVERING,
-                    message="Live gaze confidence is too low for cursor follow.",
-                    observation=observation,
-                    target=target,
+            corrected_point = bias_corrector.apply((unbiased_point.x, unbiased_point.y), edge_padding=edge_padding)
+            observation = smoother.smooth(
+                GazeSample(
+                    point=NormalizedPoint(*corrected_point),
+                    confidence=reading.sample.confidence,
+                    delta_ms=reading.sample.delta_ms,
                 )
             )
-            continue
-
-        point = cursor.next_point(observation)
-        visual_point = point if point is not None else cursor.dispatched_point
-        if point_visualizer is not None and visual_point is not None:
-            _show_point_visualizer(point_visualizer, visual_point[0], visual_point[1])
-        if camera_preview is not None:
-            _show_camera_preview(
-                camera_preview,
-                reading,
-                calibrated_point=(observation.x_norm, observation.y_norm) if observation.x_norm is not None and observation.y_norm is not None else None,
-                cursor_point=visual_point,
-                target_label=target.label if target is not None else None,
+            target = inferencer.infer(observation, targets)
+            sample_delta_ms = max(0, reading.sample.delta_ms)
+            fixation_points, fixation_elapsed_ms = _update_fixation_window(
+                fixation_points,
+                corrected_point,
+                sample_delta_ms,
+                radius=fixation_radius,
             )
-        if point is None:
-            if target is not None and target.bounds is not None:
-                bias_updated = bias_corrector.maybe_update(
-                    (unbiased_point.x, unbiased_point.y),
-                    reference_point=(
-                        float(target.bounds.x) + float(target.bounds.width) / 2.0,
-                        float(target.bounds.y) + float(target.bounds.height) / 2.0,
-                    ),
-                    stable_ms=fixation_elapsed_ms,
-                    sample_delta_ms=sample_delta_ms,
-                    learn_window_x=max(fixation_radius, float(target.bounds.width) * 0.45),
-                    learn_window_y=max(fixation_radius, float(target.bounds.height) * 0.45),
+            if observation.confidence < min_confidence or observation.x_norm is None or observation.y_norm is None:
+                low_confidence_readings += 1
+                fixation_points = []
+                fixation_elapsed_ms = 0
+                emit(
+                    GazeFeedbackEvent(
+                        phase=GazeLoopPhase.RECOVERING,
+                        message="Live gaze confidence is too low for cursor follow.",
+                        observation=observation,
+                        target=target,
+                    )
                 )
-                if bias_updated:
-                    bias_update_events += 1
-            held_events += 1
-            events.append(
+                continue
+
+            point = cursor.next_point(observation)
+            visual_point = point if point is not None else cursor.dispatched_point
+            if point_visualizer is not None and visual_point is not None:
+                _show_point_visualizer(point_visualizer, visual_point[0], visual_point[1])
+            if camera_preview is not None:
+                _show_camera_preview(
+                    camera_preview,
+                    reading,
+                    calibrated_point=(observation.x_norm, observation.y_norm) if observation.x_norm is not None and observation.y_norm is not None else None,
+                    cursor_point=visual_point,
+                    target_label=target.label if target is not None else None,
+                )
+            if point is None:
+                if target is not None and target.bounds is not None:
+                    bias_updated = bias_corrector.maybe_update(
+                        (unbiased_point.x, unbiased_point.y),
+                        reference_point=(
+                            float(target.bounds.x) + float(target.bounds.width) / 2.0,
+                            float(target.bounds.y) + float(target.bounds.height) / 2.0,
+                        ),
+                        stable_ms=fixation_elapsed_ms,
+                        sample_delta_ms=sample_delta_ms,
+                        learn_window_x=max(fixation_radius, float(target.bounds.width) * 0.45),
+                        learn_window_y=max(fixation_radius, float(target.bounds.height) * 0.45),
+                    )
+                    if bias_updated:
+                        bias_update_events += 1
+                held_events += 1
+                emit(
+                    GazeFeedbackEvent(
+                        phase=GazeLoopPhase.TRACKING,
+                        message="Live gaze cursor hold is within the movement threshold.",
+                        observation=observation,
+                        target=target,
+                    )
+                )
+                continue
+
+            proposal = ActionProposal(
+                action=ActionName.FOCUS_TARGET,
+                arguments={
+                    "normalized_point": {"x": point[0], "y": point[1]},
+                    **({"target_ref": target.target_id, "target_label": target.label} if target is not None else {}),
+                    **({"target_bounds": target.bounds.model_dump(mode="json")} if target is not None and target.bounds is not None else {}),
+                },
+                confidence=observation.confidence,
+                risk=RiskLevel.L1,
+                requires_confirmation=False,
+                rationale="Live gaze cursor-follow mode moved the pointer to the current normalized gaze point.",
+            )
+            decision = broker.decide(proposal)
+            request = broker.build_execution_request(decision, environment)
+            result = adapter.execute(request)
+            attempted_moves += 1
+            if result.status != ExecutionStatus.SUCCESS:
+                failed_moves += 1
+                emit(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING,
+                    message=f"Cursor control stopped: {result.message}", observation=observation,
+                    target=target, proposal=proposal, result=result))
+                break
+            moved_events += 1
+            if result.details.get("dry_run", False):
+                preview_moves += 1
+                message = "Previewing gaze position; desktop pointer is unchanged."
+            else:
+                message = "Cursor following gaze."
+            emit(
                 GazeFeedbackEvent(
                     phase=GazeLoopPhase.TRACKING,
-                    message="Live gaze cursor hold is within the movement threshold.",
+                    message=message,
                     observation=observation,
                     target=target,
+                    proposal=proposal,
+                    result=result,
                 )
             )
-            continue
 
-        proposal = ActionProposal(
-            action=ActionName.FOCUS_TARGET,
-            arguments={
-                "normalized_point": {"x": point[0], "y": point[1]},
-                **({"target_ref": target.target_id, "target_label": target.label} if target is not None else {}),
-                **({"target_bounds": target.bounds.model_dump(mode="json")} if target is not None and target.bounds is not None else {}),
-            },
-            confidence=observation.confidence,
-            risk=RiskLevel.L1,
-            requires_confirmation=False,
-            rationale="Live gaze cursor-follow mode moved the pointer to the current normalized gaze point.",
-        )
-        decision = broker.decide(proposal)
-        request = broker.build_execution_request(decision, environment)
-        result = adapter.execute(request)
-        moved_events += 1
-        message = 'Moved cursor with live gaze follow.'
-        if target is not None:
-            message = f'Moved cursor with live gaze follow toward "{target.label}".'
-        events.append(
-            GazeFeedbackEvent(
-                phase=GazeLoopPhase.TRACKING,
-                message=message,
-                observation=observation,
-                target=target,
-                proposal=proposal,
-                result=result,
-            )
-        )
+    except KeyboardInterrupt:
+        stopped = True
+        emit(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="Gaze session stopped. Diagnostics saved."))
 
-    events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
-    return events, {
-        "attempted_frames": frames,
+    emit(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
+    return list(events), {
+        "status": "error" if failed_moves else "stopped" if stopped else "success",
+        "message": "Cursor execution failed; see session log." if failed_moves else "Gaze session stopped." if stopped else "Gaze session completed.",
+        "attempted_frames": attempted_frames,
+        "attempted_moves": attempted_moves,
+        "failed_moves": failed_moves,
+        "preview_moves": preview_moves,
+        "executed_moves": moved_events - preview_moves,
         "successful_readings": successful_readings,
         "missing_readings": missing_readings,
-        "moved_events": moved_events,
+        "moved_events": moved_events - preview_moves,
+        "successful_move_requests": moved_events,
         "held_events": held_events,
         "low_confidence_readings": low_confidence_readings,
         "bias_update_events": bias_update_events,
@@ -2568,7 +2611,14 @@ def capture_live_gaze_context(
         hits,
         key=lambda target_id: (hits[target_id], latest_match[target_id][2]),
     )
-    observation, target, _ = latest_match[dominant_target_id]
+    observation, target, last_index = latest_match[dominant_target_id]
+    latest_target_id = max(latest_match, key=lambda target_id: latest_match[target_id][2])
+    if latest_target_id != dominant_target_id or frames - 1 - last_index > 2 or hits[dominant_target_id] < 2:
+        events.append(GazeFeedbackEvent(
+            phase=GazeLoopPhase.RECOVERING,
+            message="The gaze target changed or tracking was lost near the end of capture. Look steadily at the target and retry.",
+        ))
+        return None, events, summary
     context = LiveGazeContext(
         observation=observation,
         target=target,

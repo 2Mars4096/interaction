@@ -12,6 +12,47 @@ The current product direction is now sharper:
 - **Hardware:** normal webcam only for the first prototype
 - **Showcase:** basic controls that can start replacing parts of keyboard and mouse use
 
+## Mac test app
+
+Open [Interaction.app](dist/Interaction.app) in Finder. Choose a mode, press **Start**, and use **Stop** or **⌘⇧Esc** to end the session. Check **Control my Mac** for actual typing/pointer control; it starts unchecked for preview.
+
+For a first test, choose **Dictation**, enable live control, and click the test pad after Start. See [Mac app instructions](docs/macos-app.md) for permissions, gaze calibration, and rebuilding.
+
+## Start using the core controls
+
+Install with Python 3.11+ on macOS (`pip install -e ".[dev]"`). The speech helper needs Apple's Command Line Tools; install them with `xcode-select --install` if compilation reports that they are missing. Grant microphone and speech-recognition permissions when prompted, and Accessibility permission for live keyboard/pointer actions.
+
+For repeated voice commands:
+
+```bash
+interaction voice-live --continuous --execute
+```
+
+Say `open Safari`, `switch to Notes`, `scroll down`, or `press escape`. Say `type hello world` to propose text insertion, then answer `yes` or `cancel` when prompted. Confirmation stays in the same session. Unclear answers get one retry, then the action is cancelled. Changing the active app/window before confirming also cancels the action.
+
+For streaming dictation into the focused text field:
+
+```bash
+interaction voice-dictate --continuous --execute
+```
+
+Click the intended text field while capture is starting. Spoken punctuation works, and dictation inserts text without asking for confirmation on every clause. Automatic deletion/replacement commands such as `scratch that` are disabled in live mode because field/caret ownership cannot be verified; edit corrections manually. Preview mode can still simulate correction plans.
+
+Say `stop listening` or press Ctrl+C to finish. The spoken stop prevents further actions, and recording finishes at the current capture-window boundary. `--max-turns 3` limits a continuous session to three capture windows. These are repeated capture windows, with small gaps between them, rather than a gapless audio service. Omit `--execute` to inspect dry-run plans.
+
+From this checkout, without installing the CLI entry point, use `PYTHONPATH=src python -m interaction` in place of `interaction` (dependencies must still be installed).
+
+For gaze plus a confirmed voice action:
+
+```bash
+interaction gaze-calibrate
+interaction fusion-live --execute
+```
+
+Look at a large target, say `click this` or `open this`, and keep looking there through confirmation. The program recaptures gaze after speech and checks the proposed target again after `yes`; lost tracking, a changed window, or a changed target cancels the pending action. This remains a sequential, one-command gaze workflow.
+
+Translation is unavailable in the live CLI until a real language backend is configured. `shell-gui-demo` is a typed-command/layout demo; its precision landmarks are previews. Use the CLI commands above for microphone and webcam input.
+
 ## Status
 
 This repository now contains a working prototype stack through multimodal fusion: typed contracts, broker policy, a bounded macOS adapter, a push-to-talk voice loop, a gaze loop, a webcam-backed coarse gaze provider, and a shared-state fusion loop for commands like `"open this"` and `"click this"`.
@@ -148,7 +189,7 @@ In dictation-oriented lanes, the current local formatter now supports:
 - immediate duplicate-word and short false-start cleanup
 - duplicate-clause suppression for repeated streaming clause boundaries
 - spoken formatting such as `open paren`, `close paren`, and `new sentence`
-- recent-draft edits such as repeated `scratch that`, `replace that with ...`, `delete last sentence`, `replace last sentence with ...`, and self-correction cues like `i mean ...`
+- preview-only recent-draft edit simulation (`scratch that`, replacement, sentence deletion, and self-correction); destructive corrections are blocked in live mode
 
 Recommended working demo on macOS:
 

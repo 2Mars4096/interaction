@@ -1,0 +1,22 @@
+{
+  "fixture_id": "canonical_open_safari",
+  "category": "canonical_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/canonical_open_safari.json",
+  "prompt_text": "open Safari",
+  "reference_transcript": "open Safari",
+  "source_engine": "piper",
+  "variant_id": "piper_amy_low",
+  "voice_id": "en_US-amy-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "canonical",
+    "command",
+    "app-launch"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/canonical_open_safari/piper_amy_low.wav",
+  "duration_s": 1.184,
+  "status": "generated"
+}

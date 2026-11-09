@@ -74,6 +74,21 @@ class MultimodalFusionLoop:
         self.state = state or SharedInteractionState()
         self.metrics = metrics or FusionMetrics()
         self.pending_decision = None
+        self.pending_environment: EnvironmentSnapshot | None = None
+        self.pending_target: GroundedTarget | None = None
+        self.pending_observation: GazeObservation | None = None
+
+    def state_snapshot(self) -> dict[str, object]:
+        active_scope = self.state.active_scope()
+        latest_environment = self.state.latest_environment
+        latest_target = self.state.latest_target()
+        return {
+            "has_pending_decision": self.pending_decision is not None,
+            "active_scope": active_scope.value if active_scope is not None else None,
+            "latest_environment": latest_environment.model_dump(mode="json") if latest_environment is not None else None,
+            "latest_target": latest_target.model_dump(mode="json") if latest_target is not None else None,
+            "candidate_targets": [target.model_dump(mode="json") for target in self.state.candidate_targets(limit=3)],
+        }
 
     def update_gaze_context(
         self,
@@ -136,6 +151,10 @@ class MultimodalFusionLoop:
             if self.pending_decision is None:
                 self.metrics.recoveries += 1
                 events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="There is no pending fused action to confirm.", transcript=text))
+            elif (reason := self._pending_context_error(environment)) is not None:
+                self.pending_decision = None
+                self.metrics.cancellations += 1
+                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=reason, transcript=text))
             else:
                 allow_decision = self.broker.confirm(self.pending_decision)
                 self.pending_decision = None
@@ -230,6 +249,9 @@ class MultimodalFusionLoop:
             return self._execute_allow_decision(decision, environment)
         if decision.decision == BrokerDecisionType.CONFIRM:
             self.pending_decision = decision
+            self.pending_environment = environment
+            self.pending_target = self.state.latest_target()
+            self.pending_observation = self.state.latest_observation()
             self.metrics.confirmations += 1
             return [
                 FusionFeedbackEvent(
@@ -251,6 +273,33 @@ class MultimodalFusionLoop:
             ),
             FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."),
         ]
+
+    def _pending_context_error(self, environment: EnvironmentSnapshot) -> str | None:
+        previous = self.pending_environment
+        if previous is not None and (
+            previous.active_app, previous.active_bundle_id, previous.active_window_title
+        ) != (environment.active_app, environment.active_bundle_id, environment.active_window_title):
+            return "The active app or window changed. Pending action cancelled; repeat your command."
+        proposal = self.pending_decision.proposal
+        if not proposal.arguments.get("target_ref"):
+            return None
+        target = self.state.latest_target()
+        old = self.pending_target
+        if target is None or old is None or target.target_id != old.target_id:
+            return "The gaze target expired or changed. Pending action cancelled; look at the intended target and repeat your command."
+        candidate_fields = {"candidate_id", "source", "label", "role", "screen_point", "screen_bounds", "normalized_bounds", "enabled", "pid", "window_id", "window_title"}
+        old_candidate = old.candidate.model_dump(include=candidate_fields) if old.candidate else None
+        new_candidate = target.candidate.model_dump(include=candidate_fields) if target.candidate else None
+        if target.bounds != old.bounds or new_candidate != old_candidate:
+            return "The desktop target moved or changed. Pending action cancelled; repeat your command."
+        observation = self.state.latest_observation()
+        before = self.pending_observation
+        if before is not None and observation is not None:
+            if all(v is not None for v in (before.x_norm, before.y_norm, observation.x_norm, observation.y_norm)):
+                distance = ((before.x_norm - observation.x_norm) ** 2 + (before.y_norm - observation.y_norm) ** 2) ** 0.5
+                if distance > 0.06:
+                    return "Your gaze moved away from the proposed point. Pending action cancelled; repeat your command."
+        return None
 
     def _execute_allow_decision(self, decision, environment: EnvironmentSnapshot) -> list[FusionFeedbackEvent]:
         self.metrics.executions += 1

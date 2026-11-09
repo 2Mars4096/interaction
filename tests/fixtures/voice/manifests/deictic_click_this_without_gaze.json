@@ -1,0 +1,28 @@
+{
+  "fixture_id": "deictic_click_this_without_gaze",
+  "category": "deictic_command",
+  "prompt_text": "click this",
+  "lane": "command",
+  "reference_transcript": "click this",
+  "expected_route": "clarify",
+  "expected_message_contains": "gaze grounding",
+  "tags": [
+    "deictic",
+    "clarify",
+    "command"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/deictic_click_this_without_gaze/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/deictic_click_this_without_gaze/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "fixture_id": "paraphrase_launch_safari",
+  "category": "paraphrase_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/paraphrase_launch_safari.json",
+  "prompt_text": "launch Safari",
+  "reference_transcript": "launch Safari",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "paraphrase",
+    "command",
+    "app-launch"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/paraphrase_launch_safari/piper_lessac_low.wav",
+  "duration_s": 1.184,
+  "status": "generated"
+}

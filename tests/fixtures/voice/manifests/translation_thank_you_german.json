@@ -1,0 +1,45 @@
+{
+  "fixture_id": "translation_thank_you_german",
+  "category": "translation_command",
+  "prompt_text": "translate thank you to German",
+  "lane": "command",
+  "reference_transcript": "translate thank you to German",
+  "reference_output_text": "danke",
+  "gemma_response": {
+    "route": "translation",
+    "confidence": 0.93,
+    "translated_text": "danke",
+    "target_language": "German",
+    "source_language": "English",
+    "rationale": "Fixture backend translated thank you into German for insertion."
+  },
+  "expected_route": "translation",
+  "expected_action": "type_text",
+  "expected_arguments": {
+    "text": "danke",
+    "voice_route": "translation",
+    "target_language": "German",
+    "source_language": "English"
+  },
+  "expected_risk": "L2",
+  "expected_broker_decision": "confirm",
+  "tags": [
+    "translation",
+    "command",
+    "multilingual"
+  ],
+  "variants": [
+    {
+      "variant_id": "piper_lessac_low",
+      "audio_path": "../audio/translation_thank_you_german/piper_lessac_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-lessac-low"
+    },
+    {
+      "variant_id": "piper_amy_low",
+      "audio_path": "../audio/translation_thank_you_german/piper_amy_low.wav",
+      "source_engine": "piper",
+      "voice_id": "en_US-amy-low"
+    }
+  ]
+}

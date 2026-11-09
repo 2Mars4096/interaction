@@ -1,0 +1,22 @@
+{
+  "fixture_id": "ambiguous_switch_only",
+  "category": "ambiguous_command",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/ambiguous_switch_only.json",
+  "prompt_text": "switch",
+  "reference_transcript": "switch",
+  "source_engine": "piper",
+  "variant_id": "piper_lessac_low",
+  "voice_id": "en_US-lessac-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "ambiguous",
+    "command",
+    "negative"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/ambiguous_switch_only/piper_lessac_low.wav",
+  "duration_s": 0.512,
+  "status": "generated"
+}

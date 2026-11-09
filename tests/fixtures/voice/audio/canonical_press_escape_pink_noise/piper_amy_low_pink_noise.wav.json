@@ -1,0 +1,24 @@
+{
+  "fixture_id": "canonical_press_escape_pink_noise",
+  "category": "canonical_command_noise",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/canonical_press_escape_pink_noise.json",
+  "prompt_text": "press escape",
+  "reference_transcript": "press escape",
+  "source_engine": "piper",
+  "variant_id": "piper_amy_low_pink_noise",
+  "voice_id": "en_US-amy-low",
+  "speaking_rate": null,
+  "background_noise": "pink",
+  "noise_level_db": -32.0,
+  "tags": [
+    "canonical",
+    "command",
+    "keyboard",
+    "noise",
+    "background-noise"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/canonical_press_escape_pink_noise/piper_amy_low_pink_noise.wav",
+  "duration_s": 1.088,
+  "status": "generated"
+}

@@ -1,0 +1,23 @@
+{
+  "fixture_id": "negative_story_about_translation_example",
+  "category": "negative_translation_mention",
+  "lane": "command",
+  "manifest_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/manifests/negative_story_about_translation_example.json",
+  "prompt_text": "the tutorial said translate hello to French as an example but I am not asking you to do that",
+  "reference_transcript": "the tutorial said translate hello to French as an example but I am not asking you to do that",
+  "source_engine": "piper",
+  "variant_id": "piper_amy_low",
+  "voice_id": "en_US-amy-low",
+  "speaking_rate": null,
+  "background_noise": null,
+  "noise_level_db": null,
+  "tags": [
+    "negative",
+    "long-form",
+    "translation-mention",
+    "command"
+  ],
+  "audio_path": "/Volumes/data/Dropbox/Projects/interaction/tests/fixtures/voice/audio/negative_story_about_translation_example/piper_amy_low.wav",
+  "duration_s": 6.0,
+  "status": "generated"
+}
