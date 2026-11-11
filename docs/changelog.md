@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-11 — Section 5
+- [test] Closed the five-section reliability plan with 476 passing tests and eight passing Linux/macOS CI jobs, including installed-wheel native helper compilation and cache reuse on macOS ARM64.
 - [infra] Corrected the first published workflow to use supported macOS 15 runners after GitHub cancelled the retired macOS 14 jobs.
 - [infra] Bounded dependency compatibility, excluded OpenCV 5, and added a universal hashed runtime/test/build baseline.
 - [fix] Packaged native speech source and embedded permission metadata in distributions; made helper compilation/capture bounded, typed, and recoverable with source/platform-aware caching.

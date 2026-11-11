@@ -140,6 +140,15 @@ The explicit first bounded command set is captured in `docs/command-vocabulary.m
 - Preserve the deterministic scripted `fusion-smoke` path alongside the real live demo path
 - Tighten structured recovery behavior for missing calibration, missing gaze lock, camera denial, and speech denial
 
+## Phase 9 — Reliable Live Interaction
+
+- Complete repeated live voice turns and same-session follow-ups with immediate feedback and preserved dictation
+- Maintain fresh concurrent gaze and bind pending actions to actual elapsed time and foreground context
+- Validate visible webcam calibration on independent targets before enabling live control
+- Recover from tracking loss and require deliberate dwell rearming
+- Make dependencies, native speech resources, distribution builds, and Linux/macOS checks reproducible
+- Keep webcam accuracy, streaming speech, Accessibility target identity, and a native shell as separate product and hardware milestones
+
 ## 8. Remaining Open Questions
 
 These are the important questions still worth resolving before implementation gets too opinionated:
@@ -162,7 +171,7 @@ Each phase should follow the same execution pattern:
 5. Run a code-review gate at phase end.
 6. Patch review findings before calling the phase complete.
 
-This repo now has explicit high-level plans and detailed subplans for Phases 1 through 8 under `docs/plans/`.
+This repo now has explicit high-level plans and detailed subplans for Phases 1 through 9 under `docs/plans/`.
 
 ## 10. Current Milestone Status
 
@@ -175,3 +184,4 @@ This repo now has explicit high-level plans and detailed subplans for Phases 1 t
 - **Phase 6:** complete with a real macOS live voice path, explicit readiness targets, a tester-facing smoke command, and a recorded MVP-readiness review gate
 - **Phase 7:** complete with live webcam calibration, a persisted `gaze-live` tester path, webcam-specific MVP readiness updates, and a recorded review gate
 - **Phase 8:** complete with a live sequential multimodal demo path, a repo-local `phase8` smoke wrapper, structured live fusion recovery payloads, and a recorded review gate
+- **Phase 9:** complete with five sequentially reviewed and pushed reliability sections, 476 passing tests, and eight passing Linux/macOS CI jobs including installed-wheel native compilation; hardware accuracy and interaction evaluation remain open

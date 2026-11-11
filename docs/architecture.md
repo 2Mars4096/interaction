@@ -2,7 +2,7 @@
 
 ## Status
 
-Prototype implementation exists through Phase 8; Phase 9 repairs live interaction before hardware evaluation. This document captures the intended system shape and the concrete modules already in place.
+Prototype implementation and the Phase 9 reliability repairs are complete under their documented scope; hardware evaluation remains open. This document captures the intended system shape and the concrete modules already in place.
 
 ## Working Assumptions
 

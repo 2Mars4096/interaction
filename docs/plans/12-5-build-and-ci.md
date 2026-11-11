@@ -1,7 +1,7 @@
 # 12-5: Reproducible Build and CI
 
 **Parent:** [12-reliable-live-interaction](12-reliable-live-interaction.md)
-**Status:** in-progress
+**Status:** completed
 **Goal:** Make supported development installs, distributed speech resources, and platform build checks repeatable before hardware evaluation.
 
 ## Tasks
@@ -12,7 +12,7 @@
 - [x] Clean native recording files on failure and cancel timed-out recognition tasks.
 - [x] Add Linux/macOS CI with Python version coverage, tests, critical lint, distribution/resource checks, and native compile-only verification.
 - [x] Run clean local dependency/build/install checks and independent source review.
-- [ ] Commit and push; inspect available CI results.
+- [x] Commit and push; inspect available CI results.
 
 ## Decisions and plan review
 - Lock the known working runtime baseline rather than silently taking a new major OpenCV release that removes used APIs.
@@ -30,4 +30,5 @@
 - Built the wheel from the sdist with the locked build tools; both archives passed resource/baseline verification.
 - Installed the wheel into a separate virtual environment outside the checkout; CLI, imports, packaged resources, and Haar classifiers passed on Linux/Python 3.12.
 - Independent source gate: [Section 5 review](../reviews/2026-11-11-section-5-build-and-ci.md).
-- The first published CI run passed all four Linux jobs. GitHub cancelled the retired macOS 14 jobs before setup; the macOS 15 correction must pass before the platform gate closes. Local checks do not claim native execution or hardware accuracy.
+- The first published CI run passed all four Linux jobs. GitHub cancelled the retired macOS 14 jobs before setup; the corrected macOS 15 workflow then passed all eight jobs in [run 42963494427](https://github.com/2Mars4096/interaction/actions/runs/42963494427).
+- The macOS ARM64 installed-wheel probe compiled the packaged native helper and verified cache reuse. This does not claim microphone execution or hardware accuracy.

@@ -16,13 +16,15 @@ The current product direction is now sharper:
 
 This repository now contains a working prototype stack through multimodal fusion: typed contracts, broker policy, a bounded macOS adapter, a push-to-talk voice loop, a gaze loop, a webcam-backed coarse gaze provider, and a shared-state fusion loop for commands like `"open this"` and `"click this"`.
 
+The Phase 9 reliability pass adds repeated live voice sessions, fresh concurrent gaze, validated calibration, tracking-loss recovery, and reproducible packages. Its 476-test suite and eight Linux/macOS CI jobs passed, including native speech-helper compilation from the installed wheel. Hardware accuracy and live interaction evaluation remain open; see the [completion plan](docs/plans/12-reliable-live-interaction.md).
+
 The current implementation is still intentionally limited:
 
 - broker policy and execution-request preparation are implemented
 - the macOS adapter supports a small bounded action set with dry-run as the default safety mode
 - live pointer actions can now use explicit screen coordinates or normalized gaze-grounded points, and still require macOS accessibility permissions
 - highlight behavior is still a placeholder notification, not a real overlay
-- a push-to-talk voice loop now exists with transcript streaming, bounded voice parsing, confirmation/cancellation handling, and dry-run broker execution
+- the voice loop supports bounded command parsing, confirmation/cancellation handling, and dry-run broker execution; live sessions repeat final-transcript captures
 - a real macOS microphone-to-transcript path now exists through a native helper exposed as `interaction voice-live`
 - a real webcam calibration and live gaze path now exists through `interaction gaze-calibrate` and `interaction gaze-live`
 - `gaze-live` now supports continuous `cursor` follow plus explicit dwell-triggered `highlight`, `move`, `click`, `right-click`, `double-click`, and two-stage `drag` modes for self-testing gaze-only manipulation
@@ -92,7 +94,7 @@ Manual Phase 8 live multimodal demo:
 python scripts/phase8_live_fusion_smoke.py --gaze-frames 12 --duration 4.0 --confirm-duration 2.5
 ```
 
-Installed CLI after `pip install -e ".[dev]"`:
+Installed CLI after the development setup below:
 
 ```bash
 interaction fusion-smoke

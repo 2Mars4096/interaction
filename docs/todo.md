@@ -66,12 +66,12 @@
   - [x] [11-4-phase-8-code-review-gate](plans/11-4-phase-8-code-review-gate.md)
 
 ## Phase 9 — Reliable Live Interaction
-- [ ] [12-reliable-live-interaction](plans/12-reliable-live-interaction.md) — five sequential implementation and push sections before hardware evaluation
+- [x] [12-reliable-live-interaction](plans/12-reliable-live-interaction.md) — five sequential implementation and push sections before hardware evaluation
   - [x] [12-1-voice-session](plans/12-1-voice-session.md) — commands, feedback, and live follow-ups
   - [x] [12-2-live-context](plans/12-2-live-context.md) — timing, pending actions, and live context
   - [x] [12-3-calibration-quality](plans/12-3-calibration-quality.md) — calibration validity and visible targets
   - [x] [12-4-tracking-recovery](plans/12-4-tracking-recovery.md) — tracking loss and deliberate dwell
-  - [ ] [12-5-build-and-ci](plans/12-5-build-and-ci.md) — dependencies, packaging, and CI
+  - [x] [12-5-build-and-ci](plans/12-5-build-and-ci.md) — dependencies, packaging, and CI
 
 ## Backlog (unphased)
 - [x] Define acceptable latency, accuracy, and accidental-action targets
