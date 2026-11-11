@@ -20,12 +20,17 @@ class FakeCalibrationProvider:
         self.opened = False
         self.closed = False
         self._samples = [
-            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.18, 0.19), confidence=0.8, delta_ms=100), used_frames=3, attempted_frames=3),
-            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.78, 0.18), confidence=0.82, delta_ms=100), used_frames=3, attempted_frames=3),
-            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.5, 0.5), confidence=0.9, delta_ms=100), used_frames=3, attempted_frames=3),
-            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.22, 0.79), confidence=0.81, delta_ms=100), used_frames=3, attempted_frames=3),
-            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.79, 0.82), confidence=0.8, delta_ms=100), used_frames=3, attempted_frames=3),
+            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.18, 0.19), confidence=0.8, delta_ms=100), used_frames=3, attempted_frames=3, raw_stddev=NormalizedPoint(.001, .001), sample_span_ms=200),
+            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.78, 0.18), confidence=0.82, delta_ms=100), used_frames=3, attempted_frames=3, raw_stddev=NormalizedPoint(.001, .001), sample_span_ms=200),
+            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.5, 0.5), confidence=0.9, delta_ms=100), used_frames=3, attempted_frames=3, raw_stddev=NormalizedPoint(.001, .001), sample_span_ms=200),
+            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.22, 0.79), confidence=0.81, delta_ms=100), used_frames=3, attempted_frames=3, raw_stddev=NormalizedPoint(.001, .001), sample_span_ms=200),
+            WebcamSampleAggregate(sample=GazeSample(point=NormalizedPoint(0.79, 0.82), confidence=0.8, delta_ms=100), used_frames=3, attempted_frames=3, raw_stddev=NormalizedPoint(.001, .001), sample_span_ms=200),
         ]
+        self._samples.extend(
+            WebcamSampleAggregate(GazeSample(NormalizedPoint(x, y), confidence=.9), 3, 3,
+                                  raw_stddev=NormalizedPoint(.001, .001), sample_span_ms=200)
+            for x, y in ((.5, .2), (.8, .5), (.5, .8), (.2, .5))
+        )
 
     def open(self) -> None:
         self.opened = True
@@ -33,7 +38,9 @@ class FakeCalibrationProvider:
     def close(self) -> None:
         self.closed = True
 
-    def capture_average_sample(self, *, required_frames: int = 6, max_attempts: int | None = None, delta_ms: int = 100):
+    def capture_average_sample(self, *, required_frames: int = 6, max_attempts: int | None = None, delta_ms: int = 100, on_frame=None):
+        if on_frame is not None:
+            on_frame()
         return self._samples.pop(0)
 
 
@@ -104,7 +111,7 @@ class FakePointVisualizer:
         self.hidden_calls += 1
 
 
-def test_gaze_calibrate_cli_saves_profile(monkeypatch, tmp_path: Path) -> None:
+def test_gaze_calibrate_cli_saves_profile(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeCalibrationProvider)
 
     stdout = io.StringIO()
@@ -117,7 +124,7 @@ def test_gaze_calibrate_cli_saves_profile(monkeypatch, tmp_path: Path) -> None:
     assert (tmp_path / ".interaction" / "profiles" / "webcam-live.json").exists()
 
 
-def test_gaze_calibrate_cli_reports_insufficient_samples(monkeypatch, tmp_path: Path) -> None:
+def test_gaze_calibrate_cli_reports_insufficient_samples(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeSparseCalibrationProvider)
 
     stdout = io.StringIO()
@@ -140,10 +147,10 @@ def test_gaze_live_requires_saved_calibration_profile(tmp_path: Path) -> None:
     assert payload["live_gaze"]["error"] == "missing_calibration_profile"
 
 
-def test_gaze_live_cli_uses_saved_profile_and_triggers_highlight(monkeypatch, tmp_path: Path) -> None:
+def test_gaze_live_cli_uses_saved_profile_and_triggers_highlight(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeLiveProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):
@@ -155,10 +162,10 @@ def test_gaze_live_cli_uses_saved_profile_and_triggers_highlight(monkeypatch, tm
     assert any(event["phase"] == "triggered" for event in payload["events"])
 
 
-def test_gaze_live_cli_click_mode_plans_normalized_pointer_action(monkeypatch, tmp_path: Path) -> None:
+def test_gaze_live_cli_click_mode_plans_normalized_pointer_action(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeLiveProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):
@@ -176,10 +183,10 @@ def test_gaze_live_cli_click_mode_plans_normalized_pointer_action(monkeypatch, t
     )
 
 
-def test_gaze_live_cli_cursor_mode_plans_continuous_move_action(monkeypatch, tmp_path: Path) -> None:
+def test_gaze_live_cli_cursor_mode_plans_continuous_move_action(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeLiveProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):
@@ -266,10 +273,10 @@ def test_run_live_webcam_trace_hides_point_visualizer_when_readings_are_missing(
     assert visualizer.hidden_calls == 3
 
 
-def test_gaze_live_cli_reports_camera_error(monkeypatch, tmp_path: Path) -> None:
+def test_gaze_live_cli_reports_camera_error(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeErrorProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):

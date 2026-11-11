@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import time
+from dataclasses import asdict
 from typing import Any
 from types import SimpleNamespace
 
@@ -29,7 +29,6 @@ from interaction.runtime import (
     VoiceCommandLoop,
     WebcamCalibrationError,
     collect_webcam_calibration,
-    default_webcam_calibration_targets,
     default_webcam_targets,
     run_live_cursor_follow,
     run_live_webcam_trace,
@@ -38,6 +37,7 @@ from interaction.session import SessionLogger, SessionReplay, serialize_feedback
 from interaction.session.live import LiveEventBuffer
 from interaction.intent.voice import normalize_command
 from interaction.ui import ConsoleOverlayRenderer, LiveGazeDotOverlay, OverlayController
+from interaction.ui.calibration import CalibrationTargetOverlay, CalibrationUIError
 from interaction.vision import CalibrationSample, DwellTrigger, GazeSample, NormalizedPoint, NormalizedScreenTarget, OpenCVWebcamGazeProvider, WebcamProviderError
 
 
@@ -271,66 +271,77 @@ def _speech_capture_payload(capture) -> dict[str, Any]:
 def _run_gaze_calibrate(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
     settings = store.load_settings()
     camera_index = settings.camera_index if args.camera_index is None else args.camera_index
-    provider = OpenCVWebcamGazeProvider(camera_index=camera_index)
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
-    events: list[object] = []
+    events = LiveEventBuffer("gaze", logger, overlay)
+    provider = None
+    target_screen = None
+    profile = None
+    step_results = []
+    calibration = {}
+    step_number = 0
+
+    def before_step(step):
+        nonlocal step_number
+        step_number += 1
+        target_screen.show_target(step.expected.x, step.expected.y,
+                                  f"{step_number}/9: {step.label}", phase=step.phase)
+        events.append(GazeFeedbackEvent(
+            phase=GazeLoopPhase.CALIBRATING,
+            message=f"{step.phase.title()} {step_number}/9: look at the {step.label} dot. Press Escape to cancel.",
+        ))
+        target_screen.wait(max(0, args.settle_ms))
+
     try:
+        target_screen = CalibrationTargetOverlay()
+        target_screen.open()
+        provider = OpenCVWebcamGazeProvider(camera_index=camera_index)
         provider.open()
         profile, step_results = collect_webcam_calibration(
-            provider,
-            frames_per_step=args.frames_per_step,
-            delta_ms=args.delta_ms,
-            before_step=lambda step: _append_calibration_prompt(events, step.label, args.frames_per_step, args.settle_ms),
+            provider, frames_per_step=args.frames_per_step, delta_ms=args.delta_ms,
+            before_step=before_step, on_frame=target_screen.pump,
         )
-    except WebcamProviderError as error:
-        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=error.message))
-        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
-        calibration = {
-            "status": "error",
-            "error": error.code,
-            "message": error.message,
-            "payload": error.payload,
-        }
-        step_results = []
-        profile_payload = None
-    except WebcamCalibrationError as error:
-        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=error.message))
-        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
-        calibration = {
-            "status": "error",
-            "error": error.code,
-            "message": error.message,
-            "payload": error.payload,
-        }
+        target_screen.pump()
+        calibration = {"status": "success", "display_size": target_screen.screen_size}
+    except (WebcamProviderError, WebcamCalibrationError, CalibrationUIError) as error:
+        profile = None
+        calibration = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
         step_results = list(error.payload.get("steps", []))
-        profile_payload = None
-    else:
-        store.save_calibration_profile(profile, name="webcam-live")
-        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.CALIBRATING, message="Saved live webcam calibration profile."))
-        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
-        calibration = {"status": "success"}
-        profile_payload = {
-            "x_scale": profile.x_scale,
-            "y_scale": profile.y_scale,
-            "x_offset": profile.x_offset,
-            "y_offset": profile.y_offset,
-        }
+        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=error.message))
+    except KeyboardInterrupt:
+        profile = None
+        calibration = {"status": "error", "error": "calibration_cancelled", "message": "Calibration cancelled."}
+        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="Calibration cancelled."))
+    except Exception as error:
+        profile = None
+        calibration = {"status": "error", "error": "calibration_failed", "message": str(error)}
+        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=f"Calibration failed: {error}"))
     finally:
-        provider.close()
+        for resource in (provider, target_screen):
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception as error:
+                    profile = None
+                    calibration = {"status": "error", "error": "calibration_cleanup_failed", "message": str(error)}
+                    events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=f"Calibration cleanup failed: {error}"))
+    if profile is not None:
+        try:
+            store.save_calibration_profile(profile, name="webcam-live")
+        except (OSError, ValueError) as error:
+            profile = None
+            calibration = {"status": "error", "error": "calibration_save_failed", "message": str(error)}
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=f"Could not save calibration: {error}"))
+        else:
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.CALIBRATING, message="Validation passed. Saved live webcam calibration profile."))
+    events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Calibration session ended."))
     return _build_payload(
-        source="gaze",
-        events=events,
-        logger=logger,
-        overlay=overlay,
-        renderer=renderer,
+        source="gaze", events=events, logger=logger, overlay=overlay, renderer=renderer,
         extra={
-            "settings": settings.__dict__,
-            "camera_index": camera_index,
-            "calibration": calibration,
-            "calibration_steps": step_results,
-            "calibration_profile": profile_payload,
+            "settings": settings.__dict__, "camera_index": camera_index,
+            "calibration": calibration, "calibration_steps": step_results,
+            "calibration_profile": _profile_to_payload(profile),
         },
     )
 
@@ -415,7 +426,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
     gaze_mode = args.action
     gaze_action = _gaze_action_name(gaze_mode)
     camera_index = settings.camera_index if args.camera_index is None else args.camera_index
-    profile = store.load_calibration_profile("webcam-live")
+    profile = store.load_calibration_profile("webcam-live", require_validated=True, camera_index=camera_index)
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
@@ -424,7 +435,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
         events = [
             GazeFeedbackEvent(
                 phase=GazeLoopPhase.RECOVERING,
-                message="No live webcam calibration profile is saved yet. Run `interaction gaze-calibrate` first.",
+                message="No current validated calibration profile is available for this camera. Run `interaction gaze-calibrate` first.",
             ),
             GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."),
         ]
@@ -444,7 +455,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 "live_gaze": {
                     "status": "error",
                     "error": "missing_calibration_profile",
-                    "message": "No live webcam calibration profile is saved yet. Run `interaction gaze-calibrate` first.",
+                    "message": "No current validated calibration profile is available for this camera. Run `interaction gaze-calibrate` first.",
                 },
                 "gaze_visualization": visualization,
                 "calibration_profile": None,
@@ -526,12 +537,7 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
             "cursor_settings": _cursor_settings_payload(args),
             "gaze_control_settings": _gaze_control_settings_payload(args),
             "gaze_visualization": visualization,
-            "calibration_profile": {
-                "x_scale": profile.x_scale,
-                "y_scale": profile.y_scale,
-                "x_offset": profile.x_offset,
-                "y_offset": profile.y_offset,
-            },
+            "calibration_profile": _profile_to_payload(profile),
         },
     )
 
@@ -576,7 +582,7 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
     settings = store.load_settings()
     effective_dry_run = _effective_dry_run(settings, args)
     camera_index = settings.camera_index if args.camera_index is None else args.camera_index
-    profile = store.load_calibration_profile("webcam-live")
+    profile = store.load_calibration_profile("webcam-live", require_validated=True, camera_index=camera_index)
     loop = MultimodalFusionLoop(adapter=MacOSPlatformAdapter(dry_run=effective_dry_run))
     loop.state.gaze_context_window_ms = settings.gaze_context_window_ms
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
@@ -629,7 +635,7 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
 
     try:
         if profile is None:
-            raise WebcamProviderError("missing_calibration_profile", "No live webcam calibration profile is saved yet. Run `interaction gaze-calibrate` first.")
+            raise WebcamProviderError("missing_calibration_profile", "No current validated calibration profile is available for this camera. Run `interaction gaze-calibrate` first.")
         events.append(FusionFeedbackEvent(phase=FusionLoopPhase.TRACKING, message="Starting gaze tracking. Look steadily at a target."))
         sampler = LiveGazeSampler(OpenCVWebcamGazeProvider(camera_index=camera_index), profile,
                                   max_age_ms=settings.gaze_context_window_ms,
@@ -744,17 +750,6 @@ def _replay_event(record: Any) -> object:
     )
 
 
-def _append_calibration_prompt(events: list[object], label: str, frames_per_step: int, settle_ms: int) -> None:
-    events.append(
-        GazeFeedbackEvent(
-            phase=GazeLoopPhase.CALIBRATING,
-            message=f'Look at the {label} reference point. Capturing {frames_per_step} stable webcam readings.',
-        )
-    )
-    if settle_ms > 0:
-        time.sleep(settle_ms / 1000.0)
-
-
 def _effective_dry_run(settings, args: argparse.Namespace) -> bool:
     return False if getattr(args, "execute", False) else settings.dry_run
 
@@ -808,12 +803,5 @@ def _gaze_auto_confirm_actions(action: ActionName) -> set[ActionName]:
     return set()
 
 
-def _profile_to_payload(profile) -> dict[str, float] | None:
-    if profile is None:
-        return None
-    return {
-        "x_scale": profile.x_scale,
-        "y_scale": profile.y_scale,
-        "x_offset": profile.x_offset,
-        "y_offset": profile.y_offset,
-    }
+def _profile_to_payload(profile) -> dict[str, Any] | None:
+    return asdict(profile) if profile is not None else None

@@ -9,7 +9,7 @@ Define when the first tester-facing macOS prototype is ready for a real user tri
 - `interaction voice-live` or `python scripts/phase6_live_voice_smoke.py` for real microphone capture and bounded voice commands; add `--execute` to run approved live actions
 - `interaction gaze-calibrate` or `python scripts/phase7_webcam_calibrate.py` for live webcam calibration
 - `interaction gaze-live` or `python scripts/phase7_live_webcam_smoke.py` for the live webcam gaze path; use `--action cursor|move|click|right-click|double-click|drag` for explicit gaze-only manipulation tests
-- `interaction fusion-live` or `python scripts/phase8_live_fusion_smoke.py` for the live sequential gaze-plus-voice demo; add `--execute` to run approved live pointer actions
+- `interaction fusion-live` or `python scripts/phase8_live_fusion_smoke.py` for a live command with concurrent webcam sensing during speech and confirmation; add `--execute` to run approved live pointer actions
 - `interaction gaze-smoke` or `python scripts/phase5_productization_smoke.py gaze-smoke` for the scripted gaze baseline
 - `python scripts/phase3_webcam_smoke.py --frames 12` for the lower-level webcam provider diagnostic
 - `interaction fusion-smoke` for the repeatable dry-run fusion path
@@ -17,7 +17,7 @@ Define when the first tester-facing macOS prototype is ready for a real user tri
 ## Acceptance Targets
 
 - **Voice latency:** the live voice path should either return a final transcript or a structured failure message within 10 seconds of starting a 4-second capture window.
-- **Webcam calibration:** the live webcam calibration path should either save a profile with at least 3 successful calibration targets or return a structured failure result.
+- **Webcam calibration:** save only after complete timed samples at all five visible fitting points and four separate validation points satisfy error and mapped-dispersion gates; failures/cancellation return structured feedback and preserve the previous profile.
 - **Webcam gaze startup:** the live webcam path should either begin producing target/recovery events or fail structurally within 5 seconds of startup.
 - **Large-target gaze reaction:** the scripted and webcam-backed gaze paths should highlight a stable large target within about 1 second of dwell when permissions and lighting are acceptable.
 - **Accidental actions:** `L2` and `L3` actions must never auto-execute without confirmation in the MVP test flow.
@@ -50,7 +50,7 @@ interaction fusion-smoke
 
 ## Notes
 
-- The current tester-facing MVP path now includes live voice, live webcam gaze, continuous cursor follow, explicit gaze-only dwell manipulation modes including bounded drag, and a live sequential multimodal `fusion-live` demo. Webcam gaze remains heuristic and region-based, and the multimodal path is still sequential rather than a continuous concurrent session stack.
+- The tester-facing path includes bounded/continuous voice command sessions, live webcam gaze, cursor follow, explicit dwell manipulation, and `fusion-live` with concurrent camera sensing during a command and confirmation. Webcam gaze remains heuristic and region-based; speech still uses recording windows, and native hardware performance remains unmeasured by the automated checks.
 - The cursor-follow path exposes tunable `deadzone`, `smoothing`, `edge_padding`, and `max_step` controls for per-machine adjustment during manual testing.
 - The gaze-only dwell path now also exposes `action_cooldown_ms` and `drag_timeout_ms` controls so testers can reduce repeated clicks and recover cleanly from an abandoned drag arm.
 - This document closes the backlog item around acceptable latency, accuracy, and accidental-action targets for the first MVP trial.

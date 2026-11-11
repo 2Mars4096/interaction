@@ -62,6 +62,9 @@ def test_capture_average_sample_averages_successful_readings(monkeypatch) -> Non
     assert aggregate.attempted_frames == 3
     assert aggregate.sample.point.x == pytest_approx(0.3, tolerance=0.001)
     assert aggregate.sample.point.y == pytest_approx(0.4, tolerance=0.001)
+    assert aggregate.raw_stddev.x == pytest_approx(0.1, tolerance=0.001)
+    assert aggregate.raw_stddev.y == pytest_approx(0.1, tolerance=0.001)
+    assert aggregate.sample_span_ms >= 90
 
 
 def test_open_suppresses_native_camera_stderr(monkeypatch, capfd) -> None:

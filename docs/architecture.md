@@ -118,6 +118,11 @@ src/interaction/
 - `src/interaction/feedback/gaze.py` provides event-level gaze feedback states.
 - `src/interaction/runtime/gaze.py` coordinates calibration, smoothing, target inference, conservative dwell triggers, and broker/macOS dry-run execution.
 - `src/interaction/runtime/webcam.py` now coordinates live webcam calibration targets, persisted calibration fitting, default live target regions, and the live webcam gaze session helper.
+- `src/interaction/vision/calibration.py` fits signed per-axis least-squares mappings and retains typed held-out error/dispersion evidence in versioned profiles. Unclamped predictions are used for validation.
+- `src/interaction/ui/calibration.py` renders primary-display reference targets on the main thread, pumps events during settling/sampling, and handles Escape/close cancellation.
+- Calibration uses five fitting points followed by four disjoint validation points. The webcam aggregate reports real sample duration and per-axis dispersion; mapped jitter is checked after fitting.
+- Live profile loading checks schema, tracker signal, camera index, and recomputed validation evidence. Atomic profile writes preserve the prior file on unsuccessful calibration.
+- Normalized macOS pointer conversion uses Quartz global display bounds, matching the calibration screen's logical primary-display coordinates instead of Retina backing pixel dimensions.
 - `scripts/phase3_gaze_smoke.py` is the safe manual smoke harness for the gaze loop.
 - `scripts/phase3_webcam_smoke.py` is the live webcam smoke harness for the OpenCV provider patch.
 - `src/interaction/runtime/state.py` now holds the shared multimodal interaction state for recent transcripts, gaze context, candidate targets, and freshness windows.

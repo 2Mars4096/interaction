@@ -107,10 +107,10 @@ def test_fusion_live_requires_saved_calibration_profile(tmp_path: Path) -> None:
     assert payload["live_gaze_context"]["error"] == "missing_calibration_profile"
 
 
-def test_fusion_live_reports_camera_error(monkeypatch, tmp_path: Path) -> None:
+def test_fusion_live_reports_camera_error(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionCameraErrorProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):
@@ -122,10 +122,10 @@ def test_fusion_live_reports_camera_error(monkeypatch, tmp_path: Path) -> None:
     assert payload["live_gaze_context"]["error"] == "camera_unavailable"
 
 
-def test_fusion_live_reports_missing_gaze_lock(monkeypatch, tmp_path: Path) -> None:
+def test_fusion_live_reports_missing_gaze_lock(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeNoReadingGazeProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):
@@ -137,11 +137,11 @@ def test_fusion_live_reports_missing_gaze_lock(monkeypatch, tmp_path: Path) -> N
     assert payload["live_gaze_context"]["error"] == "missing_gaze_lock"
 
 
-def test_fusion_live_reports_speech_error(monkeypatch, tmp_path: Path) -> None:
+def test_fusion_live_reports_speech_error(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionGazeProvider)
     monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", FakeFusionSpeechErrorProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):
@@ -154,11 +154,11 @@ def test_fusion_live_reports_speech_error(monkeypatch, tmp_path: Path) -> None:
     assert payload["live_capture"]["error"] == "microphone_denied"
 
 
-def test_fusion_live_runs_confirmation_required_flow(monkeypatch, tmp_path: Path) -> None:
+def test_fusion_live_runs_confirmation_required_flow(monkeypatch, tmp_path: Path, validated_profile) -> None:
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionGazeProvider)
     monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", FakeFusionSpeechProvider)
     store = JsonStateStore(RuntimePaths(tmp_path / ".interaction"))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
 
     stdout = io.StringIO()
     with redirect_stdout(stdout):
@@ -193,7 +193,7 @@ def test_fusion_live_runs_confirmation_required_flow(monkeypatch, tmp_path: Path
     )
 
 
-def test_fusion_prompt_is_visible_before_confirmation_recording(monkeypatch, tmp_path: Path) -> None:
+def test_fusion_prompt_is_visible_before_confirmation_recording(monkeypatch, tmp_path: Path, validated_profile) -> None:
     feedback = io.StringIO()
 
     class PromptCheckingProvider(FakeFusionSpeechProvider):
@@ -205,7 +205,7 @@ def test_fusion_prompt_is_visible_before_confirmation_recording(monkeypatch, tmp
     monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionGazeProvider)
     monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", PromptCheckingProvider)
     store = JsonStateStore(RuntimePaths(tmp_path))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
     output = io.StringIO()
     with redirect_stdout(output), redirect_stderr(feedback):
         main(["fusion-live", "--runtime-dir", str(tmp_path), "--gaze-frames", "6"])

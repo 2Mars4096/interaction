@@ -32,7 +32,7 @@ The current implementation is still intentionally limited:
 - a multimodal fusion loop now exists with recent-gaze grounding, confidence-based clarification, confirmation handling, and repeatable dry-run metrics
 - a productization layer now exists with a local CLI, session logging and replay, persisted settings/calibration, and terminal overlay snapshots
 - live webcam use depends on macOS camera permission and remains heuristic rather than precision-grade
-- live webcam gaze now expects a saved `webcam-live` calibration profile before the first real run
+- live webcam gaze requires a current validated `webcam-live` profile for the selected camera
 - the current fusion strategy only reasons over recent grounded targets, not a richer desktop-semantic target graph
 - live fusion runs one command and any required confirmation while a single camera worker maintains fresh gaze context
 - the overlay is terminal-rendered for now, not a native always-on-top macOS overlay
@@ -174,6 +174,14 @@ Voice and fusion sessions inspect the foreground application and window before a
 `fusion-live` keeps a single camera worker running during speech. It selects the recent stable gaze target when the command finishes. Confirmations expire after 15 seconds and cancel on a changed application/window, lost or stale gaze, a different target, or excessive movement from the pending point. Returning to the old target does not revive a cancelled action. `--gaze-delta-ms` controls the sampling delay; timestamps and freshness use actual elapsed time.
 
 These checks identify an application/window and coarse screen region. Exact controls and editable fields still require Accessibility target integration.
+
+### Visible calibration and validation
+
+Run `interaction gaze-calibrate` on the primary display. A visible dot moves through five fitting positions, then four different positions to check the fitted mapping. Keep your head comfortably still and look at each dot; press Escape or Ctrl-C to cancel. Tk and a desktop display are required. Progress appears immediately in the terminal as well as on screen.
+
+Each position needs the full requested sample set (at least three frames). Calibration supports reversed axes and rejects weak signal ranges, incomplete samples, excessive mapped jitter, or poor results on the independent points. The initial acceptance limits are a mean normalized error of 0.12, a worst-point error of 0.20, and a maximum per-axis mapped standard deviation of 0.05. These are coarse-target engineering checks, not a claim of precise cursor accuracy.
+
+Only a successful validation replaces the saved profile. Failed or cancelled attempts preserve the previous file. Live modes reject older profiles without validation evidence and profiles from a different camera index or tracker schema; rerun calibration after updating. Recalibrate when camera position, display setup, or seating changes. Calibration and pointer conversion currently address the primary display only.
 
 - **Voice for intent**: "open that", "translate this", "scroll slower", "reply in Chinese"
 - **Gaze for targeting**: "that" is grounded by what the user is looking at

@@ -44,7 +44,7 @@ class ControlledCamera:
 
 
 def run_live_session(
-    monkeypatch, tmp_path, *, lose_during_confirmation=False,
+    monkeypatch, tmp_path, validated_profile, *, lose_during_confirmation=False,
     keep_tracking_lost=False, change_context_turn=None,
 ):
     camera = ControlledCamera()
@@ -117,7 +117,7 @@ def run_live_session(
     monkeypatch.setattr("interaction.app.MacOSPlatformAdapter", dry_run_adapter)
     monkeypatch.setattr("interaction.app.capture_environment", lambda: environment[0].model_copy())
     store = JsonStateStore(RuntimePaths(tmp_path))
-    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    store.save_calibration_profile(validated_profile, name="webcam-live")
     output = io.StringIO()
     with redirect_stdout(output), redirect_stderr(io.StringIO()):
         exit_code = main([
@@ -132,8 +132,8 @@ def run_live_session(
     return json.loads(output.getvalue()), capture_progress, reacquired_targets
 
 
-def test_camera_continues_during_command_and_confirmation_capture(monkeypatch, tmp_path):
-    payload, progress, _ = run_live_session(monkeypatch, tmp_path)
+def test_camera_continues_during_command_and_confirmation_capture(monkeypatch, tmp_path, validated_profile):
+    payload, progress, _ = run_live_session(monkeypatch, tmp_path, validated_profile)
 
     assert len(progress) == 2
     assert all(after >= before + 3 for before, after in progress)
@@ -146,9 +146,9 @@ def test_camera_continues_during_command_and_confirmation_capture(monkeypatch, t
     assert results[0]["details"]["commands"][0][3] == "click-normalized"
 
 
-def test_loss_and_reacquisition_during_confirmation_cannot_restore_pending_click(monkeypatch, tmp_path):
+def test_loss_and_reacquisition_during_confirmation_cannot_restore_pending_click(monkeypatch, tmp_path, validated_profile):
     payload, progress, reacquired_targets = run_live_session(
-        monkeypatch, tmp_path, lose_during_confirmation=True
+        monkeypatch, tmp_path, validated_profile, lose_during_confirmation=True
     )
 
     assert len(progress) == 2
@@ -163,9 +163,9 @@ def test_loss_and_reacquisition_during_confirmation_cannot_restore_pending_click
     assert any("tracking was lost" in (event["message"] or "") for event in payload["events"])
 
 
-def test_tracking_loss_during_confirmation_removes_old_target_from_final_payload(monkeypatch, tmp_path):
+def test_tracking_loss_during_confirmation_removes_old_target_from_final_payload(monkeypatch, tmp_path, validated_profile):
     payload, progress, _ = run_live_session(
-        monkeypatch, tmp_path, lose_during_confirmation=True, keep_tracking_lost=True
+        monkeypatch, tmp_path, validated_profile, lose_during_confirmation=True, keep_tracking_lost=True
     )
 
     assert len(progress) == 2
@@ -180,8 +180,8 @@ def test_tracking_loss_during_confirmation_removes_old_target_from_final_payload
 
 
 @pytest.mark.parametrize("capture_turn", [1, 2])
-def test_foreground_context_change_during_capture_cancels_action(monkeypatch, tmp_path, capture_turn):
-    payload, progress, _ = run_live_session(monkeypatch, tmp_path, change_context_turn=capture_turn)
+def test_foreground_context_change_during_capture_cancels_action(monkeypatch, tmp_path, validated_profile, capture_turn):
+    payload, progress, _ = run_live_session(monkeypatch, tmp_path, validated_profile, change_context_turn=capture_turn)
 
     assert len(progress) == capture_turn
     capture_key = "live_capture" if capture_turn == 1 else "confirmation_capture"

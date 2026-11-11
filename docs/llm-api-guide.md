@@ -136,6 +136,13 @@ The initial typed schemas now live in `interaction.contracts`. They are intentio
 - Unknown context is represented explicitly. Live execution stops when the foreground app cannot be identified; scripted dry-run callers can still supply an unknown snapshot.
 - Exact editable-field identity and semantic target bounds remain future Accessibility integration work.
 
+## Calibration Evidence
+
+- Live gaze must use a current profile compatible with the camera index and tracker/signal schema. Legacy or unvalidated profiles do not enable live control.
+- Validation quality records held-out target errors, sample counts, raw dispersion, and dispersion after the fitted mapping. Fitting and validation targets are separate; validation does not modify coefficients.
+- Error limits are coarse engineering gates. A passing profile does not convert eye-detection confidence into a measured probability of accurate targeting.
+- Coordinates refer to the primary display. Multi-display semantic targeting remains outside the current contract.
+
 ## Remaining Decisions
 
 - Canonical grounded-target schema

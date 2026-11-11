@@ -2,12 +2,14 @@
 
 ## Open Bugs
 
-- Calibration accepts uninformative or insufficient measurements and lacks visible reference targets and independent validation (Phase 9 section 3).
 - Tracking loss can retain partial dwell/armed drag state; gaze lock can be reported after one valid frame (Phase 9 section 4).
 - OpenCV 5 removes APIs used by this provider; dependency compatibility and native helper packaging need explicit gates (Phase 9 section 5).
 
 ## Resolved in Phase 9
 
+- Section 3: signed calibration fitting rejects degenerate signals; visible targets, timed complete samples, mapped dispersion, and separate validation points gate profile saving.
+- Section 3: live profiles require versioned camera/tracker-compatible validation evidence; failed calibration preserves the previous saved profile.
+- Section 3: normalized macOS pointer conversion uses global display bounds rather than backing pixels, with simulated Retina-coordinate regression coverage.
 - Section 2: live gaze remains active during speech; freshness and pending-action expiry use a monotonic clock, and confirmations are bound to app/window/target context.
 - Section 2: a single camera worker owns open/read/close, invalidates locks on loss, and reports structured startup/read/shutdown failures.
 - Section 1: live voice confirmation can now complete in the same process; successive commands can share one session.
@@ -26,6 +28,7 @@
 - **Translation-provider limitation:** `translate_text` is recognized in the voice loop, but no local translation provider is configured yet.
 - **Webcam-permission limitation:** the live webcam calibration and `gaze-live` paths need macOS camera permission for the active Python process; without that permission they recover with explicit structured errors.
 - **Gaze-precision limitation:** the current webcam provider and inferencer are tuned for large targets and conservative dwell-based actions, not fine cursor replacement or dense gaze-only desktop control.
+- **Calibration limitation:** acceptance thresholds are initial coarse-target engineering limits. Passing this check does not establish real task accuracy, drift resistance, or a probability of correct targeting. Only the primary display is supported; physical camera/display/seating changes require recalibration.
 - **Gaze-robustness limitation:** Haar-based face/eye detection and thresholded pupil estimation are heuristic; lighting, glasses glare, and pose can degrade performance.
 - **Gaze-control limitation:** `gaze-live` now has continuous `cursor` follow plus explicit dwell-triggered move/click/right-click/double-click/drag modes, but they are still coarse tester modes and can misfire on small targets or unstable lighting.
 - **Cursor-follow limitation:** the new `cursor` mode uses smoothing, deadzone, edge padding, and max-step heuristics rather than true calibrated eye-tracker dynamics, so some per-machine tuning may still be needed.

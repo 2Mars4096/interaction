@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
+import time
 
 import cv2
 import numpy as np
@@ -38,6 +40,8 @@ class WebcamSampleAggregate:
     sample: GazeSample
     used_frames: int
     attempted_frames: int
+    raw_stddev: NormalizedPoint | None = None
+    sample_span_ms: int = 0
 
 
 class OpenCVWebcamGazeProvider:
@@ -132,17 +136,32 @@ class OpenCVWebcamGazeProvider:
         required_frames: int = 6,
         max_attempts: int | None = None,
         delta_ms: int = 100,
+        on_frame: Callable[[], None] | None = None,
     ) -> WebcamSampleAggregate | None:
+        if required_frames < 1 or delta_ms < 0:
+            raise ValueError("Calibration frame count must be positive and interval nonnegative.")
         if max_attempts is None:
             max_attempts = max(required_frames, 1) * 4
         readings: list[WebcamGazeReading] = []
         attempted_frames = 0
+        first_sample_at = None
+        last_sample_at = None
         while attempted_frames < max_attempts and len(readings) < required_frames:
+            if on_frame is not None:
+                on_frame()
             attempted_frames += 1
             reading = self.read(delta_ms=delta_ms)
-            if reading is None:
-                continue
-            readings.append(reading)
+            if reading is not None:
+                last_sample_at = time.monotonic()
+                if first_sample_at is None:
+                    first_sample_at = last_sample_at
+                readings.append(reading)
+            if attempted_frames < max_attempts and len(readings) < required_frames:
+                deadline = time.monotonic() + delta_ms / 1000
+                while time.monotonic() < deadline:
+                    if on_frame is not None:
+                        on_frame()
+                    time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         if not readings:
             return None
         avg_x = sum(reading.sample.point.x for reading in readings) / len(readings)
@@ -156,6 +175,11 @@ class OpenCVWebcamGazeProvider:
             ),
             used_frames=len(readings),
             attempted_frames=attempted_frames,
+            raw_stddev=NormalizedPoint(
+                float(np.std([reading.sample.point.x for reading in readings])),
+                float(np.std([reading.sample.point.y for reading in readings])),
+            ),
+            sample_span_ms=int((last_sample_at - first_sample_at) * 1000),
         )
 
     @staticmethod

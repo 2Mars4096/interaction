@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-11 — Section 3
+- [fix] Replaced unsigned calibration spans with signed least-squares fitting and explicit rejection of degenerate input.
+- [feat] Added visible cancellable reference targets, complete timed sampling, independent validation points, and mapped jitter/error evidence before saving a live profile.
+- [fix] Required current camera/tracker-compatible validation for live modes and made profile writes atomic; unsuccessful attempts retain the previous file.
+- [fix] Converted normalized pointer positions through Quartz display bounds so backing pixel scale does not offset calibration targets.
+- [test] Added calibration math, quality, persistence, screen lifecycle, failure preservation, and coordinate regressions.
+
 ## 2026-11-11 — Section 2
 - [fix] Bound pending actions to real elapsed time, foreground application/window context, fresh gaze, target revision, and point drift; tracking loss or expiry cancels stale confirmations.
 - [feat] Kept one camera-owning worker running through live speech and confirmation with structured lifecycle errors and stable timestamped snapshots.

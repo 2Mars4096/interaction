@@ -5,10 +5,19 @@ from __future__ import annotations
 import argparse
 import ctypes
 from ctypes import util
+import math
 
 
 class CGPoint(ctypes.Structure):
     _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+class CGSize(ctypes.Structure):
+    _fields_ = [("width", ctypes.c_double), ("height", ctypes.c_double)]
+
+
+class CGRect(ctypes.Structure):
+    _fields_ = [("origin", CGPoint), ("size", CGSize)]
 
 
 def _load_quartz() -> ctypes.CDLL:
@@ -21,10 +30,8 @@ def _load_quartz() -> ctypes.CDLL:
     quartz.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
     quartz.CFRelease.argtypes = [ctypes.c_void_p]
     quartz.CGMainDisplayID.restype = ctypes.c_uint32
-    quartz.CGDisplayPixelsWide.argtypes = [ctypes.c_uint32]
-    quartz.CGDisplayPixelsWide.restype = ctypes.c_size_t
-    quartz.CGDisplayPixelsHigh.argtypes = [ctypes.c_uint32]
-    quartz.CGDisplayPixelsHigh.restype = ctypes.c_size_t
+    quartz.CGDisplayBounds.argtypes = [ctypes.c_uint32]
+    quartz.CGDisplayBounds.restype = CGRect
     return quartz
 
 
@@ -104,10 +111,19 @@ def drag_normalized(start_x: float, start_y: float, end_x: float, end_y: float) 
 
 
 def _normalized_to_point(quartz: ctypes.CDLL, x: float, y: float) -> CGPoint:
+    if not math.isfinite(x) or not math.isfinite(y):
+        raise ValueError("Pointer coordinates must be finite.")
     display_id = quartz.CGMainDisplayID()
-    width = max(1, int(quartz.CGDisplayPixelsWide(display_id)))
-    height = max(1, int(quartz.CGDisplayPixelsHigh(display_id)))
-    return CGPoint(_clamp(x) * (width - 1), _clamp(y) * (height - 1))
+    # Mouse events use global display coordinates, not Retina backing pixels.
+    bounds = quartz.CGDisplayBounds(display_id)
+    if not all(math.isfinite(value) for value in (bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)):
+        raise RuntimeError("Primary display bounds are unavailable.")
+    if bounds.size.width < 1 or bounds.size.height < 1:
+        raise RuntimeError("Primary display bounds are empty.")
+    return CGPoint(
+        bounds.origin.x + _clamp(x) * (bounds.size.width - 1),
+        bounds.origin.y + _clamp(y) * (bounds.size.height - 1),
+    )
 
 
 def _clamp(value: float) -> float:

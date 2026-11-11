@@ -40,6 +40,7 @@ class WebcamCalibrationError(RuntimeError):
 class WebcamCalibrationTarget:
     label: str
     expected: NormalizedPoint
+    phase: str = "fitting"
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,16 @@ def default_webcam_targets() -> list[NormalizedScreenTarget]:
     return regions
 
 
+def default_webcam_validation_targets() -> tuple[WebcamCalibrationTarget, ...]:
+    """Independent points that are never included in the fitting data."""
+    return (
+        WebcamCalibrationTarget("upper middle", NormalizedPoint(0.5, 0.2), "validation"),
+        WebcamCalibrationTarget("middle right", NormalizedPoint(0.8, 0.5), "validation"),
+        WebcamCalibrationTarget("lower middle", NormalizedPoint(0.5, 0.8), "validation"),
+        WebcamCalibrationTarget("middle left", NormalizedPoint(0.2, 0.5), "validation"),
+    )
+
+
 def collect_webcam_calibration(
     provider: OpenCVWebcamGazeProvider,
     *,
@@ -136,48 +147,95 @@ def collect_webcam_calibration(
     delta_ms: int = 100,
     max_attempts_multiplier: int = 4,
     before_step: Callable[[WebcamCalibrationTarget], None] | None = None,
+    on_frame: Callable[[], None] | None = None,
 ) -> tuple[CalibrationProfile, list[dict[str, Any]]]:
-    samples: list[CalibrationSample] = []
+    if frames_per_step < 3 or delta_ms < 1 or max_attempts_multiplier < 1:
+        raise WebcamCalibrationError("invalid_calibration_options", "Calibration needs at least 3 frames per point and a positive sampling interval.")
     step_results: list[dict[str, Any]] = []
-    for step in default_webcam_calibration_targets():
-        if before_step is not None:
-            before_step(step)
-        aggregate = provider.capture_average_sample(
-            required_frames=frames_per_step,
-            max_attempts=max(frames_per_step, 1) * max_attempts_multiplier,
-            delta_ms=delta_ms,
-        )
-        if aggregate is None:
-            step_results.append(
-                {
-                    "label": step.label,
-                    "expected": {"x": step.expected.x, "y": step.expected.y},
-                    "success": False,
-                    "used_frames": 0,
-                    "attempted_frames": max(frames_per_step, 1) * max_attempts_multiplier,
-                }
+
+    def collect(targets):
+        samples, aggregates = [], []
+        for step in targets:
+            if before_step is not None:
+                before_step(step)
+            aggregate = provider.capture_average_sample(
+                required_frames=frames_per_step,
+                max_attempts=frames_per_step * max_attempts_multiplier,
+                delta_ms=delta_ms,
+                on_frame=on_frame,
             )
-            continue
-        raw_point = aggregate.sample.point
-        samples.append(CalibrationSample(raw=raw_point, expected=step.expected))
-        step_results.append(
-            {
-                "label": step.label,
+            result = {
+                "label": step.label, "phase": step.phase,
                 "expected": {"x": step.expected.x, "y": step.expected.y},
-                "raw": {"x": raw_point.x, "y": raw_point.y},
-                "success": True,
-                "confidence": aggregate.sample.confidence,
-                "used_frames": aggregate.used_frames,
-                "attempted_frames": aggregate.attempted_frames,
+                "success": False, "used_frames": 0,
+                "attempted_frames": frames_per_step * max_attempts_multiplier,
             }
+            step_results.append(result)
+            if aggregate is None:
+                result["reason"] = "No gaze samples were collected."
+                continue
+            point = aggregate.sample.point
+            dispersion = aggregate.raw_stddev
+            valid = (
+                aggregate.used_frames >= frames_per_step
+                and aggregate.sample_span_ms >= (frames_per_step - 1) * delta_ms * 0.8
+                and math.isfinite(aggregate.sample.confidence) and aggregate.sample.confidence >= 0.6
+                and all(math.isfinite(value) and 0 <= value <= 1 for value in (point.x, point.y))
+                and dispersion is not None
+                and all(math.isfinite(value) and value >= 0 for value in (dispersion.x, dispersion.y))
+            )
+            result.update({
+                "raw": {"x": point.x, "y": point.y}, "success": valid,
+                "confidence": aggregate.sample.confidence,
+                "used_frames": aggregate.used_frames, "attempted_frames": aggregate.attempted_frames,
+                "sample_span_ms": aggregate.sample_span_ms,
+                "raw_stddev": {"x": dispersion.x, "y": dispersion.y} if dispersion else None,
+            })
+            if valid:
+                samples.append(CalibrationSample(raw=point, expected=step.expected))
+                aggregates.append(aggregate)
+            else:
+                result["reason"] = "Samples were incomplete, too brief, low-confidence, or missing finite dispersion evidence."
+        if len(samples) != len(targets):
+            raise WebcamCalibrationError(
+                "insufficient_calibration_samples", "Every reference point needs a complete stable sample set. Please retry calibration.",
+                payload={"steps": step_results, "successful_steps": len(samples)},
+            )
+        return samples, aggregates
+
+    training, training_aggregates = collect(default_webcam_calibration_targets())
+    try:
+        profile = CalibrationProfile.fit(training)
+    except ValueError as error:
+        raise WebcamCalibrationError("invalid_calibration_signal", str(error), payload={"steps": step_results}) from error
+    for result, aggregate in zip(step_results, training_aggregates):
+        dispersion = aggregate.raw_stddev
+        mapped = {"x": abs(profile.x_scale) * dispersion.x, "y": abs(profile.y_scale) * dispersion.y}
+        result["mapped_stddev"] = mapped
+        if max(mapped.values()) > 0.05:
+            raise WebcamCalibrationError(
+                "unstable_calibration_samples", "Camera noise becomes too large after calibration. Keep a stable position and retry.",
+                payload={"steps": step_results},
+            )
+    validation, validation_aggregates = collect(default_webcam_validation_targets())
+    for result, sample, aggregate in zip(step_results[len(training):], validation, validation_aggregates):
+        projected = profile.project(sample.raw)
+        result["projected"] = {"x": projected.x, "y": projected.y}
+        result["error"] = math.hypot(projected.x - sample.expected.x, projected.y - sample.expected.y)
+        result["mapped_stddev"] = {
+            "x": abs(profile.x_scale) * aggregate.raw_stddev.x,
+            "y": abs(profile.y_scale) * aggregate.raw_stddev.y,
+        }
+    try:
+        profile = profile.validate(
+            validation,
+            raw_stddevs=[aggregate.raw_stddev for aggregate in validation_aggregates],
+            sample_counts=[aggregate.used_frames for aggregate in validation_aggregates],
+            camera_index=provider.camera_index,
         )
-    if len(samples) < 3:
-        raise WebcamCalibrationError(
-            "insufficient_calibration_samples",
-            "Unable to collect enough stable webcam calibration samples.",
-            payload={"steps": step_results, "successful_steps": len(samples)},
-        )
-    return CalibrationProfile.fit(samples), step_results
+    except ValueError as error:
+        raise WebcamCalibrationError("calibration_validation_failed", str(error), payload={"steps": step_results}) from error
+    return profile, step_results
 
 
 def run_live_webcam_trace(
