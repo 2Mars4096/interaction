@@ -2,7 +2,7 @@
 
 ## Status
 
-Prototype implementation exists through Phase 4. This document now captures both the intended system shape and the concrete modules already in place.
+Prototype implementation exists through Phase 8; Phase 9 repairs live interaction before hardware evaluation. This document captures the intended system shape and the concrete modules already in place.
 
 ## Working Assumptions
 
@@ -127,6 +127,8 @@ src/interaction/
 - `scripts/phase4_fusion_smoke.py` is the repeatable dry-run smoke harness for the fusion loop.
 - `src/interaction/ui/overlay.py` now provides the structured overlay-state model plus a terminal renderer for runtime visibility.
 - `src/interaction/session/logging.py` now provides structured JSONL session logging and replay helpers.
+- `src/interaction/session/live.py` publishes live CLI feedback to stderr, journals events immediately, and updates overlay state without duplicating records when the final JSON payload is built.
+- `voice-live` can retain one command loop for bounded multiple commands or `--continuous` sessions, including required confirmation turns. Native speech capture is still windowed, not streaming.
 - `src/interaction/persistence/store.py` now provides workspace-local runtime paths, persisted settings, and calibration-profile storage.
 - `src/interaction/app.py` now provides the local CLI entry point for repeatable voice, gaze, fusion, and replay flows.
 - `scripts/phase5_productization_smoke.py` is the repo-local smoke wrapper for the Phase 5 CLI.

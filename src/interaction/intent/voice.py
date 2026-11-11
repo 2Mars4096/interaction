@@ -9,6 +9,19 @@ import re
 from interaction.contracts import ActionName, ActionProposal, NormalizedIntent, RiskLevel
 
 
+_POLITE_PREFIX = re.compile(
+    r"^(?:please(?:\s*,\s*|\s+)|(?:could|can|would|will)\s+you\s+(?:please\s+)?)",
+    re.IGNORECASE,
+)
+
+
+def normalize_command(utterance: str) -> str:
+    """Normalize command syntax only; never use this on a dictation payload."""
+    text = _POLITE_PREFIX.sub("", utterance.strip(), count=1)
+    text = " ".join(text.split())
+    return text.rstrip(".!?。！？").rstrip()
+
+
 class VoiceDirectiveType(StrEnum):
     PROPOSAL = "proposal"
     CONFIRM = "confirm"
@@ -29,21 +42,35 @@ class VoiceDirective:
 class VoiceIntentInterpreter:
     """Interpret typed or transcribed speech into bounded actions."""
 
+    _DICTATION_PATTERN = re.compile(r"^(?:type|dictate)\s(.+)$", re.IGNORECASE | re.DOTALL)
+    _TRANSLATION_PATTERN = re.compile(
+        r"^translate\s+(.+?)\s+to\s+([a-zA-Z]+)[.!?。！？]*\s*$",
+        re.IGNORECASE | re.DOTALL,
+    )
     _COMMAND_PATTERNS = (
+        (re.compile(r"^(?:click|right(?: |-)?click|secondary click|double(?: |-)?click)(?:\s+(?:this|that|here|there))?$", re.IGNORECASE), "deictic"),
+        (re.compile(r"^(?:open|focus|move(?: cursor)?|show)\s+(?:this|that|here|there)$", re.IGNORECASE), "deictic"),
         (re.compile(r"^(?:open|launch)\s+(.+)$", re.IGNORECASE), "open_app"),
         (re.compile(r"^(?:switch to|go to)\s+(.+)$", re.IGNORECASE), "switch_app"),
         (re.compile(r"^(?:press|hit)\s+(escape|tab|enter|back)$", re.IGNORECASE), "press_key"),
         (re.compile(r"^scroll\s+(up|down)(?:\s+(faster|slower))?$", re.IGNORECASE), "scroll"),
-        (re.compile(r"^(?:type|dictate)\s+(.+)$", re.IGNORECASE), "type_text"),
-        (re.compile(r"^translate\s+(.+?)\s+to\s+([a-zA-Z]+)$", re.IGNORECASE), "translate_text"),
-        (re.compile(r"^(?:click|right(?: |-)?click|secondary click|open|focus|move(?: cursor)?|show)\s+(?:this|that|here|there)$", re.IGNORECASE), "deictic"),
     )
 
     _CONFIRM_TOKENS = {"yes", "confirm", "do it", "go ahead", "okay", "ok"}
-    _CANCEL_TOKENS = {"no", "cancel", "stop", "never mind", "abort", "nope"}
+    _CANCEL_TOKENS = {"no", "cancel", "stop", "stop listening", "pause", "quit", "exit", "never mind", "abort", "nope"}
 
     def interpret(self, utterance: str) -> VoiceDirective:
-        text = " ".join(utterance.strip().split())
+        # Capture content before command normalization: sentence punctuation,
+        # repeated spaces, case, and line breaks belong to the dictated text.
+        source = _POLITE_PREFIX.sub("", utterance.lstrip(), count=1)
+        dictation = self._DICTATION_PATTERN.fullmatch(source)
+        if dictation and dictation.group(1).strip():
+            return self._proposal_from_match("type_text", utterance, dictation.groups())
+        translation = self._TRANSLATION_PATTERN.fullmatch(source)
+        if translation and translation.group(1).strip():
+            return self._proposal_from_match("translate_text", utterance, translation.groups())
+
+        text = normalize_command(utterance)
         lowered = text.lower()
         if not text:
             return VoiceDirective(
@@ -120,7 +147,7 @@ class VoiceIntentInterpreter:
                 rationale=f'Voice command requested scrolling {direction}.',
             )
         if command == "type_text":
-            text = groups[0].strip()
+            text = groups[0]
             return self._proposal(
                 utterance=utterance,
                 intent_name="type_text",

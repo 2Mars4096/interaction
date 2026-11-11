@@ -1,6 +1,6 @@
 import io
 import json
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from interaction.app import main
@@ -191,3 +191,22 @@ def test_fusion_live_runs_confirmation_required_flow(monkeypatch, tmp_path: Path
         and event["result"]["details"]["commands"][0][3] == "double-click-normalized"
         for event in payload["events"]
     )
+
+
+def test_fusion_prompt_is_visible_before_confirmation_recording(monkeypatch, tmp_path: Path) -> None:
+    feedback = io.StringIO()
+
+    class PromptCheckingProvider(FakeFusionSpeechProvider):
+        def capture_turn(self, **kwargs):
+            if self.calls == 1:
+                assert "Confirm clicking" in feedback.getvalue()
+            return super().capture_turn(**kwargs)
+
+    monkeypatch.setattr("interaction.app.OpenCVWebcamGazeProvider", FakeFusionGazeProvider)
+    monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", PromptCheckingProvider)
+    store = JsonStateStore(RuntimePaths(tmp_path))
+    store.save_calibration_profile(CalibrationProfile(), name="webcam-live")
+    output = io.StringIO()
+    with redirect_stdout(output), redirect_stderr(feedback):
+        main(["fusion-live", "--runtime-dir", str(tmp_path), "--gaze-frames", "6"])
+    assert json.loads(output.getvalue())["metrics"]["executions"] == 1

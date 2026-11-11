@@ -7,10 +7,13 @@ import re
 
 from interaction.contracts import ActionName, ActionProposal, GazeObservation, GroundedTarget, NormalizedIntent, RiskLevel
 
+from .voice import normalize_command
+
 
 _DEICTIC_PATTERNS = (
-    (re.compile(r"^(right(?: |-)?click|secondary click)\s+(?:this|that|here|there)$", re.IGNORECASE), ActionName.RIGHT_CLICK_TARGET, RiskLevel.L2),
-    (re.compile(r"^(click)\s+(?:this|that|here|there)$", re.IGNORECASE), ActionName.CLICK_TARGET, RiskLevel.L2),
+    (re.compile(r"^(right(?: |-)?click|secondary click)(?:\s+(?:this|that|here|there))?$", re.IGNORECASE), ActionName.RIGHT_CLICK_TARGET, RiskLevel.L2),
+    (re.compile(r"^(double(?: |-)?click)(?:\s+(?:this|that|here|there))?$", re.IGNORECASE), ActionName.DOUBLE_CLICK_TARGET, RiskLevel.L2),
+    (re.compile(r"^(click)(?:\s+(?:this|that|here|there))?$", re.IGNORECASE), ActionName.CLICK_TARGET, RiskLevel.L2),
     (re.compile(r"^(open)\s+(?:this|that|here|there)$", re.IGNORECASE), ActionName.DOUBLE_CLICK_TARGET, RiskLevel.L2),
     (re.compile(r"^(focus|move(?: cursor)?)\s+(?:this|that|here|there)$", re.IGNORECASE), ActionName.FOCUS_TARGET, RiskLevel.L1),
     (re.compile(r"^(show)\s+(?:this|that|here|there)$", re.IGNORECASE), ActionName.HIGHLIGHT_TARGET, RiskLevel.L0),
@@ -40,7 +43,7 @@ class FusionIntentResolver:
         stale_reason: str | None = None,
         candidate_targets: list[GroundedTarget] | None = None,
     ) -> FusionResolution:
-        text = " ".join(utterance.strip().split())
+        text = normalize_command(utterance)
         for pattern, action, risk in _DEICTIC_PATTERNS:
             if not pattern.match(text):
                 continue

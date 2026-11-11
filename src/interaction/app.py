@@ -34,6 +34,8 @@ from interaction.runtime import (
     run_live_webcam_trace,
 )
 from interaction.session import SessionLogger, SessionReplay, serialize_feedback_event
+from interaction.session.live import LiveEventBuffer
+from interaction.intent.voice import normalize_command
 from interaction.ui import ConsoleOverlayRenderer, LiveGazeDotOverlay, OverlayController
 from interaction.vision import CalibrationSample, DwellTrigger, GazeSample, NormalizedPoint, NormalizedScreenTarget, OpenCVWebcamGazeProvider, WebcamProviderError
 
@@ -87,6 +89,10 @@ def _build_parser() -> argparse.ArgumentParser:
     voice_live.add_argument("--runtime-dir", default=".interaction")
     voice_live.add_argument("--session-name", default="voice-live")
     voice_live.add_argument("--execute", action="store_true")
+    voice_live.add_argument("--confirm-duration", type=float, default=2.5)
+    voice_live.add_argument("--confirmation-attempts", type=int, default=2)
+    voice_live.add_argument("--turns", type=int, default=1, help="Number of commands in the same session.")
+    voice_live.add_argument("--continuous", action="store_true", help="Listen for successive commands until 'stop listening' or Ctrl-C.")
 
     gaze_calibrate = subparsers.add_parser("gaze-calibrate")
     gaze_calibrate.add_argument("--camera-index", type=int, default=None)
@@ -177,67 +183,79 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
-    events: list[object] = [
-        VoiceFeedbackEvent(
+    events = LiveEventBuffer("voice", logger, overlay)
+    captures: list[dict[str, Any]] = []
+    confirmation_captures: list[dict[str, Any]] = []
+    stopped = False
+    failed = False
+    commands = 0
+
+    def capture_and_handle(*, confirmation: bool = False) -> bool:
+        nonlocal stopped, failed
+        duration = args.confirm_duration if confirmation else args.duration
+        events.append(VoiceFeedbackEvent(
             phase=VoiceLoopPhase.LISTENING,
-            message=f"Starting live macOS speech capture for {args.duration:.1f}s.",
-        )
-    ]
-    live_capture: dict[str, Any] | None = None
+            message="Listening for confirmation or cancel." if confirmation else "Listening. Say a command, or 'stop listening' to finish.",
+        ))
+        try:
+            capture = provider.capture_turn(duration_s=duration, locale=args.locale)
+        except SpeechCaptureError as error:
+            payload = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
+            (confirmation_captures if confirmation else captures).append(payload)
+            if error.code == "empty_transcript" and (args.continuous or confirmation):
+                events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.LISTENING, message="No speech heard."))
+                return True
+            events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message=error.message))
+            loop.pending_decision = None
+            failed = True
+            return False
+        payload = _speech_capture_payload(capture)
+        (confirmation_captures if confirmation else captures).append(payload)
+        events.extend(loop.run_text_turn(
+            capture.transcript,
+            EnvironmentSnapshot(),
+            final_confidence=capture.confidence,
+            begin_turn=False,
+        ))
+        stopped = normalize_command(capture.transcript).lower() in {"stop", "stop listening", "pause", "quit", "exit"}
+        return True
+
     try:
-        capture = provider.capture_turn(duration_s=args.duration, locale=args.locale)
-    except SpeechCaptureError as error:
-        events.append(
-            VoiceFeedbackEvent(
-                phase=VoiceLoopPhase.RECOVERING,
-                message=error.message,
-            )
-        )
-        events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.IDLE, message="Voice loop is idle."))
-        live_capture = {
-            "status": "error",
-            "error": error.code,
-            "message": error.message,
-            "payload": error.payload,
-        }
-    else:
-        live_capture = {
-            "status": "success",
-            "transcript": capture.transcript,
-            "confidence": capture.confidence,
-            "locale": capture.locale,
-            "duration_s": capture.duration_s,
-            "provider": capture.provider,
-            "used_on_device": capture.used_on_device,
-            "permission_state": capture.permission_state,
-        }
-        events.append(
-            VoiceFeedbackEvent(
-                phase=VoiceLoopPhase.INTERPRETING,
-                transcript=capture.transcript,
-                message="Live macOS speech capture completed.",
-            )
-        )
-        events.extend(
-            loop.run_text_turn(
-                capture.transcript,
-                EnvironmentSnapshot(active_app="Finder"),
-                final_confidence=capture.confidence,
-                begin_turn=False,
-            )
-        )
+        while not stopped and (args.continuous or commands < max(1, args.turns)):
+            if not capture_and_handle():
+                break
+            if captures[-1]["status"] == "success":
+                commands += 1
+            attempts = 0
+            while not stopped and loop.pending_decision is not None and attempts < max(1, args.confirmation_attempts):
+                attempts += 1
+                if not capture_and_handle(confirmation=True):
+                    break
+            if loop.pending_decision is not None:
+                loop.pending_decision = None
+                events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="The pending action was cancelled because no clear confirmation arrived."))
+            if failed:
+                break
+    except KeyboardInterrupt:
+        stopped = True
+        loop.pending_decision = None
+        events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="Listening stopped."))
+    events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.IDLE, message="Voice session ended."))
     return _build_payload(
-        source="voice",
-        events=events,
-        logger=logger,
-        overlay=overlay,
-        renderer=renderer,
+        source="voice", events=events, logger=logger, overlay=overlay, renderer=renderer,
         extra={
             "settings": _settings_payload(settings, effective_dry_run),
-            "live_capture": live_capture,
+            "live_capture": captures[-1] if captures else None,
+            "captures": captures,
+            "confirmation_captures": confirmation_captures,
+            "session": {"commands": commands, "stopped": stopped, "failed": failed},
             "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
         },
     )
+
+
+def _speech_capture_payload(capture) -> dict[str, Any]:
+    return {"status": "success", **capture.__dict__}
 
 
 def _run_gaze_calibrate(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
@@ -585,13 +603,14 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             },
         )
 
-    environment = EnvironmentSnapshot(active_app="Finder", active_window_title="Live Fusion")
-    events = [
+    environment = EnvironmentSnapshot()
+    events = LiveEventBuffer("fusion", logger, overlay)
+    events.extend([
         FusionFeedbackEvent(
             phase=FusionLoopPhase.TRACKING,
             message=f"Capturing live gaze context from webcam for {args.gaze_frames} frames.",
         )
-    ]
+    ])
     provider = OpenCVWebcamGazeProvider(camera_index=camera_index)
     live_gaze_context: dict[str, Any]
     try:
@@ -852,13 +871,17 @@ def _build_payload(
     renderer: ConsoleOverlayRenderer,
     extra: dict[str, Any],
 ) -> dict[str, Any]:
-    snapshots: list[dict[str, Any]] = []
-    serialized_events: list[dict[str, Any]] = []
-    for event in events:
-        logger.record_event(source, event)
-        state = overlay.apply_event(source, event)
-        snapshots.append(state.to_dict())
-        serialized_events.append(serialize_feedback_event(event))
+    if isinstance(events, LiveEventBuffer):
+        snapshots = events.snapshots
+        serialized_events = events.serialized_events
+    else:
+        snapshots = []
+        serialized_events = []
+        for event in events:
+            logger.record_event(source, event)
+            state = overlay.apply_event(source, event)
+            snapshots.append(state.to_dict())
+            serialized_events.append(serialize_feedback_event(event))
     final_overlay = overlay.state
     payload = {
         "session_log": str(logger.path),

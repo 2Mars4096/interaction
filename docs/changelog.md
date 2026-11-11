@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-11
+- [fix] Section 1: normalized spoken command syntax, preserved dictated content, added bare gaze activation, and gated low-confidence commands/confirmations.
+- [feat] Section 1: added continuous/bounded multi-command voice sessions with same-session confirmation and immediate stderr/JSONL feedback.
+- [test] Section 1: added regressions for the actual live CLI confirmation lifecycle, prompt ordering, cancellation, session stop, and parser/context replacement failures.
+
 ## 2026-03-23
 - [feat] Added normalized gaze-point execution planning so `fusion-live` can turn recent gaze context into real pointer `focus`, `click`, `double-click`, and `right-click` plans instead of placeholder notifications.
 - [feat] Added `right_click_target` plus deictic multimodal support for phrases like `right click this` and `move here`.

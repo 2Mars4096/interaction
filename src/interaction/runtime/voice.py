@@ -20,11 +20,13 @@ class VoiceCommandLoop:
         adapter: PlatformAdapter | None = None,
         interpreter: VoiceIntentInterpreter | None = None,
         transcriber: ScriptedTranscriber | None = None,
+        min_recognition_confidence: float = 0.6,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
         self.interpreter = interpreter or VoiceIntentInterpreter()
         self.transcriber = transcriber or ScriptedTranscriber()
+        self.min_recognition_confidence = min_recognition_confidence
         self.turn_manager = PushToTalkTurnManager()
         self.pending_decision = None
 
@@ -77,6 +79,24 @@ class VoiceCommandLoop:
             )
         )
         directive = self.interpreter.interpret(segment.text)
+
+        if directive.kind not in {VoiceDirectiveType.CONFIRM, VoiceDirectiveType.CANCEL}:
+            # A new request supersedes the previous one, even if it needs
+            # clarification. A later "yes" must not execute an older command.
+            self.pending_decision = None
+        if (
+            directive.kind != VoiceDirectiveType.CANCEL
+            and segment.confidence is not None
+            and segment.confidence < self.min_recognition_confidence
+        ):
+            events.append(VoiceFeedbackEvent(
+                phase=VoiceLoopPhase.RECOVERING,
+                transcript=segment.text,
+                message="I could not hear that clearly. Please repeat the command or say cancel.",
+            ))
+            self.turn_manager.reset()
+            events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.IDLE, message="Voice loop is idle."))
+            return events
 
         if directive.kind == VoiceDirectiveType.CONFIRM:
             if self.pending_decision is None:

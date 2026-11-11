@@ -152,6 +152,21 @@ interaction gaze-live --frames 24 --action drag --execute --action-cooldown-ms 1
 
 ## Working Product Shape
 
+### Live voice sessions
+
+Start one session for successive commands:
+
+```bash
+interaction voice-live --continuous --execute
+interaction voice-live --turns 3
+```
+
+Say `stop listening` or press Ctrl-C to finish. Required confirmations are captured in the same session, with a visible prompt before listening; `cancel` abandons the action. Live feedback is written to stderr immediately, session events are saved as they occur, and stdout remains the final JSON result. A one-command run remains the default.
+
+Commands accept ordinary sentence punctuation and polite prefixes. `click`, `right click`, and `double click` refer to gaze targets in fusion; voice-only use asks for a target. Dictated punctuation and spacing are preserved. Explicitly low-confidence recognition asks for a repeat instead of executing.
+
+The microphone provider still records bounded audio windows; continuous sessions currently repeat those captures. Streaming recognition and a native desktop shell are separate work.
+
 - **Voice for intent**: "open that", "translate this", "scroll slower", "reply in Chinese"
 - **Gaze for targeting**: "that" is grounded by what the user is looking at
 - **Command broker for safety**: the system proposes and validates actions before sending them to the OS

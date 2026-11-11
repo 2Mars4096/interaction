@@ -119,7 +119,14 @@ The initial typed schemas now live in `interaction.contracts`. They are intentio
 - Never emit raw shell commands or unrestricted OS instructions.
 - `L2` and `L3` actions should usually surface `requires_confirmation: true` in MVP.
 
-## Pending Decisions
+## Voice Input Normalization and Recognition Evidence
+
+- Command syntax accepts sentence punctuation, polite prefixes, and bare gaze activation commands. Dictation content is preserved separately from command normalization.
+- Explicit recognition confidence below the configured threshold (default 0.6) prevents execution, including confirmation. Unknown confidence remains distinct from a measured low score.
+- Cancellation remains available regardless of recognition confidence.
+- A new non-confirmation command replaces the old pending action, including when the new command needs clarification.
+
+## Remaining Decisions
 
 - Canonical grounded-target schema
 - Final allowed action verb set for MVP

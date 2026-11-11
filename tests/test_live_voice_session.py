@@ -1,0 +1,101 @@
+import io
+import json
+from contextlib import redirect_stderr, redirect_stdout
+
+from interaction.app import main
+from interaction.audio import LiveSpeechCapture, SpeechCaptureError
+from interaction.session import SessionReplay
+
+
+def run_session(monkeypatch, tmp_path, utterances, *options):
+    output = io.StringIO()
+    feedback = io.StringIO()
+    heard = iter(utterances)
+    before_capture = []
+
+    class Provider:
+        def __init__(self, _paths):
+            pass
+
+        def capture_turn(self, *, duration_s, locale):
+            before_capture.append(feedback.getvalue())
+            utterance = next(heard)
+            if utterance is None:
+                raise SpeechCaptureError("empty_transcript", "No speech heard.")
+            return LiveSpeechCapture(utterance, 0.95, locale, duration_s)
+
+    monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", Provider)
+    with redirect_stdout(output), redirect_stderr(feedback):
+        main(["voice-live", "--runtime-dir", str(tmp_path), *options])
+    return json.loads(output.getvalue()), before_capture, feedback.getvalue()
+
+
+def test_live_typing_can_be_confirmed_in_same_process(monkeypatch, tmp_path):
+    payload, before, _ = run_session(monkeypatch, tmp_path, ["type Hello, world!", "Yes."])
+    assert "Listening" in before[0]
+    assert 'Confirm typing: "Hello, world!"?' in before[1]
+    results = [event["result"] for event in payload["events"] if event["result"]]
+    assert len(results) == 1
+    assert results[0]["proposal"]["arguments"]["text"] == "Hello, world!"
+    assert len(payload["confirmation_captures"]) == 1
+    from pathlib import Path
+
+    assert len(SessionReplay.load(Path(payload["session_log"]))) == len(payload["events"])
+
+
+def test_continuous_session_accepts_successive_commands_and_stops(monkeypatch, tmp_path):
+    payload, before, _ = run_session(
+        monkeypatch, tmp_path, ["open Safari.", "scroll down.", "Stop listening."], "--continuous"
+    )
+    assert len(before) == 3
+    assert payload["session"]["stopped"]
+    results = [event["result"] for event in payload["events"] if event["result"]]
+    assert [result["proposal"]["action"] for result in results] == ["open_app", "scroll"]
+
+
+def test_pending_action_cancellation_never_executes(monkeypatch, tmp_path):
+    payload, _, _ = run_session(monkeypatch, tmp_path, ["type example", "Cancel."])
+    assert not any(event["result"] for event in payload["events"])
+    assert any("cancelled" in (event["message"] or "") for event in payload["events"])
+
+
+def test_session_can_be_bounded_without_restarting_cli(monkeypatch, tmp_path):
+    payload, before, _ = run_session(monkeypatch, tmp_path, ["open Safari", "open Notes"], "--turns", "2")
+    assert len(before) == 2
+    assert payload["session"]["commands"] == 2
+
+
+def test_continuous_session_survives_silence(monkeypatch, tmp_path):
+    payload, before, _ = run_session(monkeypatch, tmp_path, [None, "open Safari", "stop listening"], "--continuous")
+    assert len(before) == 3
+    assert not payload["session"]["failed"]
+    assert payload["session"]["commands"] == 2
+    assert any(event["result"] for event in payload["events"])
+
+
+def test_confirmation_retries_silence_within_budget(monkeypatch, tmp_path):
+    payload, before, _ = run_session(monkeypatch, tmp_path, ["type example", None, "yes"])
+    assert len(before) == 3
+    assert any(event["result"] for event in payload["events"])
+
+
+def test_confirmation_silence_eventually_cancels(monkeypatch, tmp_path):
+    payload, before, _ = run_session(monkeypatch, tmp_path, ["type example", None, None])
+    assert len(before) == 3
+    assert not any(event["result"] for event in payload["events"])
+    assert any("no clear confirmation" in (event["message"] or "") for event in payload["events"])
+
+
+def test_keyboard_interrupt_ends_session_with_json(monkeypatch, tmp_path):
+    class Provider:
+        def __init__(self, _paths):
+            pass
+
+        def capture_turn(self, **kwargs):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("interaction.app.MacOSLiveSpeechProvider", Provider)
+    output = io.StringIO()
+    with redirect_stdout(output), redirect_stderr(io.StringIO()):
+        main(["voice-live", "--continuous", "--runtime-dir", str(tmp_path)])
+    assert json.loads(output.getvalue())["session"]["stopped"]

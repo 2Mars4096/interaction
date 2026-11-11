@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from interaction.audio import ScriptedTranscriber
 from interaction.contracts import BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget
@@ -47,6 +47,7 @@ class MultimodalFusionLoop:
         transcriber: ScriptedTranscriber | None = None,
         state: SharedInteractionState | None = None,
         metrics: FusionMetrics | None = None,
+        min_recognition_confidence: float = 0.6,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
@@ -55,6 +56,7 @@ class MultimodalFusionLoop:
         self.transcriber = transcriber or ScriptedTranscriber()
         self.state = state or SharedInteractionState()
         self.metrics = metrics or FusionMetrics()
+        self.min_recognition_confidence = min_recognition_confidence
         self.pending_decision = None
 
     def update_gaze_context(self, observation: GazeObservation, target: GroundedTarget | None) -> FusionFeedbackEvent:
@@ -104,6 +106,23 @@ class MultimodalFusionLoop:
         ]
         self.state.record_transcript(text, confidence=transcript_confidence)
         directive = self.voice_interpreter.interpret(text)
+
+        if directive.kind not in {VoiceDirectiveType.CONFIRM, VoiceDirectiveType.CANCEL}:
+            self.pending_decision = None
+        if (
+            directive.kind != VoiceDirectiveType.CANCEL
+            and transcript_confidence is not None
+            and transcript_confidence < self.min_recognition_confidence
+        ):
+            self.metrics.clarifications += 1
+            events.append(FusionFeedbackEvent(
+                phase=FusionLoopPhase.RECOVERING,
+                transcript=text,
+                message="I could not hear that clearly. Please repeat the command or say cancel.",
+                target=latest_target,
+            ))
+            events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
+            return events
 
         if directive.kind == VoiceDirectiveType.CONFIRM:
             if self.pending_decision is None:

@@ -139,8 +139,8 @@ class MacOSPlatformAdapter(PlatformAdapter):
                 return [CommandSpec(("osascript", "-e", script))]
             return None
         if action == ActionName.TYPE_TEXT:
-            text = str(proposal.arguments.get("text", "")).strip()
-            if not text:
+            text = str(proposal.arguments.get("text", ""))
+            if not text.strip():
                 return None
             escaped = self._escape_applescript(text)
             script = f'tell application "System Events" to keystroke "{escaped}"'

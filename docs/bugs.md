@@ -2,7 +2,16 @@
 
 ## Open Bugs
 
-- None recorded yet.
+- Real elapsed time and application context are not yet used consistently for gaze freshness and pending-action expiry (Phase 9 section 2).
+- Calibration accepts uninformative or insufficient measurements and lacks visible reference targets and independent validation (Phase 9 section 3).
+- Tracking loss can retain partial dwell/armed drag state; gaze lock can be reported after one valid frame (Phase 9 section 4).
+- OpenCV 5 removes APIs used by this provider; dependency compatibility and native helper packaging need explicit gates (Phase 9 section 5).
+
+## Resolved in Phase 9
+
+- Section 1: live voice confirmation can now complete in the same process; successive commands can share one session.
+- Section 1: listening and confirmation messages are delivered before blocking capture, with immediate JSONL logging.
+- Section 1: punctuation, polite prefixes, bare gaze commands, low-confidence confirmations, and superseded pending commands are covered by regression tests.
 
 ## Product / Technical Risks
 
