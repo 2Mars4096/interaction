@@ -1,7 +1,7 @@
 # 13-3: Streaming Speech
 
 **Parent:** [13-responsive-live-sessions](13-responsive-live-sessions.md)
-**Status:** in-progress
+**Status:** completed
 **Goal:** Recognize microphone audio while speaking and end a turn after a bounded silence interval, without executing partial transcripts.
 
 ## Tasks
@@ -12,7 +12,7 @@
 - [x] Show real partial transcripts immediately on stderr and record them through the existing live event journal; no partial enters the broker.
 - [x] Exercise real harmless-child protocol/lifecycle failures and CLI integration; record hardware checks separately.
 - [x] Compile packaged native resources and run pre-permission argument probes on macOS CI.
-- [ ] Pass the complete CI matrix after correcting confirmation feedback identified by the first run.
+- [x] Pass the complete CI matrix after correcting confirmation feedback identified by the first run.
 
 ## Decisions
 - Never promote a partial transcript after timeout or recognition error. Silence requests finalization; it does not authorize partial text.
@@ -24,4 +24,5 @@
 ## Verification
 - 623 tests passed locally after the confirmation-feedback fix, including 60 transport regressions and live-session streaming integration checks.
 - Independent Python/CLI/native code review passed after fixing malformed endpoint metadata handling. Native finalization is bounded from the actual capture endpoint.
-- Native compilation and installed-helper argument probes passed in [CI](https://github.com/2Mars4096/interaction/actions/runs/42993369577). The complete matrix must pass with the confirmation-feedback fix before closure. Acoustic latency/accuracy evaluation remains separate.
+- All eight jobs passed in the [corrected CI run](https://github.com/2Mars4096/interaction/actions/runs/42994103807), including Python 3.11–3.13 tests on Linux/macOS, both distribution jobs, native compilation, and installed-helper argument probes. Acoustic latency/accuracy evaluation remains separate.
+- Review: [13-3 streaming speech](../reviews/2026-11-11-13-3-streaming-speech.md).

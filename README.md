@@ -18,7 +18,7 @@ This repository now contains a working prototype stack through multimodal fusion
 
 The Phase 9 reliability pass adds repeated live voice sessions, fresh concurrent gaze, validated calibration, tracking-loss recovery, and reproducible packages. Its 476-test suite and eight Linux/macOS CI jobs passed, including native speech-helper compilation from the installed wheel. Hardware accuracy and live interaction evaluation remain open; see the [completion plan](docs/plans/12-reliable-live-interaction.md).
 
-Phase 10 adds continuous fusion sessions, bounded retained history with complete event journals, and opt-in streaming speech with real previews and silence endpointing. See the [responsive sessions plan](docs/plans/13-responsive-live-sessions.md) for section-level verification and remaining hardware checks.
+Phase 10 is complete under its documented scope: continuous fusion sessions, bounded retained history with complete event journals, and opt-in streaming speech with real previews and silence endpointing. Its 623-test suite and all eight Linux/macOS [CI jobs passed](https://github.com/2Mars4096/interaction/actions/runs/42994103807), including installed-wheel native compilation and argument probes. See the [responsive sessions plan](docs/plans/13-responsive-live-sessions.md) for section-level verification and remaining hardware checks.
 
 The current implementation is still intentionally limited:
 
@@ -182,7 +182,7 @@ interaction fusion-live --continuous --speech-mode stream --duration 8 --silence
 
 Wait for `Microphone ready`, then speak. `Hearing:` lines are revisable previews. Only a valid final result from a successfully exited helper reaches the command loop. The same mode is used for confirmations, and `stop listening` or Ctrl-C ends the session. The commands above keep the existing dry-run behavior; add `--execute` when testing actual desktop actions.
 
-In streaming mode, `--duration` is a maximum, not a mandatory recording window. Capture can end after the configured silence interval (0.2–5 seconds, default 0.8) or an actual recognizer final. If the ceiling cuts off active speech, the command is discarded and continuous mode asks for a repeat; increasing the maximum does not impose that whole wait on short commands. Recognition finalization has a separate eight-second limit. A partial, timeout, malformed event, or failed helper exit cannot authorize an action.
+In streaming mode, `--duration` sets the maximum for each primary command (default 4 seconds), and `--confirm-duration` sets a separate maximum for confirmations (default 2.5 seconds). The `--duration 8` examples above leave that confirmation maximum unchanged. Capture can end after the configured silence interval (0.2–5 seconds, default 0.8) or an actual recognizer final. If the ceiling cuts off active speech, the command is discarded and continuous mode asks for a repeat; increasing the maximum does not impose that whole wait on short commands. Recognition finalization has a separate eight-second limit. A partial, timeout, malformed event, or failed helper exit cannot authorize an action.
 
 Capture metadata reports the measured duration, configured maximum, and endpoint reason. Silence uses an initial audio-energy heuristic; microphone sensitivity, noise, recognition quality, and end-to-end latency still require testing on your Mac. Streaming is opt-in for that comparison. Use `--speech-mode recorded` for the existing fixed-window path. Each turn owns its microphone capture; this is not a wake-word or always-open audio service.
 
@@ -198,7 +198,7 @@ interaction fusion-live --continuous --confirmation-attempts 2 --execute
 
 Say `stop listening` or press Ctrl-C to finish; `cancel` abandons only the pending action. Continuous sessions recover from silence and foreground changes so you can repeat a command. A confirmation has a bounded retry budget, and exhausting it cancels the pending action. Permission and camera failures end the session with structured feedback. The default remains one command.
 
-Each command and follow-up uses current gaze and foreground context. Loss of tracking after startup allows voice-only commands and session stop, while pointer commands must regain a valid target. Final JSON includes command/confirmation captures and `session` counts, with the existing last-capture fields retained. `session.commands` counts successful primary captures, including a spoken stop; fusion's separate `metrics.executions` counts executed action results.
+Each actionable command and follow-up uses current gaze and foreground context. Loss of tracking after startup allows voice-only commands and session stop, while pointer commands must regain a valid target. Final JSON includes command/confirmation captures and `session` counts, with the existing last-capture fields retained. `session.commands` counts successful primary captures, including a spoken stop; fusion's separate `metrics.executions` counts executed action results.
 
 ### Session history and replay
 
@@ -208,7 +208,7 @@ The JSONL event journal remains complete and is written as events occur. Use `in
 
 ### Live context and cancellation
 
-Voice and fusion sessions inspect the foreground application and window before and after each speech capture. If that context changes, repeat the command in the intended location. Live execution requires an identified foreground application; the probe may need macOS Automation/Accessibility access.
+For actionable speech, voice and fusion sessions inspect the foreground application and window before and after capture. If that context changes, repeat the command in the intended location. Live execution requires an identified foreground application; the probe may need macOS Automation/Accessibility access. A recognized `stop listening` cancels pending work before post-capture context or gaze validation, so switching windows or losing tracking cannot prevent session stop.
 
 `fusion-live` keeps a single camera worker running during speech. It selects the recent stable gaze target when the command finishes. Confirmations expire after 15 seconds and cancel on a changed application/window, lost or stale gaze, a different target, or excessive movement from the pending point. Returning to the old target does not revive a cancelled action. `--gaze-delta-ms` controls the sampling delay; timestamps and freshness use actual elapsed time.
 
@@ -301,6 +301,6 @@ python scripts/verify_installed_package.py --dist-dir dist --requirements requir
 
 The default build produces a source distribution and builds the wheel from that archive using the already locked build tools. Verification checks the native helper and permission metadata in both archives. The installed-package probe creates a separate environment outside the checkout, installs the wheel and hashed dependencies, and checks imports, the CLI entry point, and OpenCV's Haar resources.
 
-On macOS, add `--compile-native` to the installed-package check to compile and cache the installed helper without running capture. GitHub Actions runs unit tests across the Python/platform matrix and the distribution checks on Linux/macOS. These checks do not open the camera, record audio, request desktop permissions, or move the pointer.
+On macOS, add `--compile-native` to the installed-package check to compile the installed helper, verify cache reuse, and probe streaming argument errors before permission requests or audio startup. GitHub Actions runs unit tests across the Python/platform matrix and the distribution checks on Linux/macOS. These checks do not open the camera, record audio, request desktop permissions, or move the pointer.
 
-Automated checks cover the Phase 9 reliability work; camera accuracy and native interaction still need hardware evaluation. Remaining gaps are tracked in [docs/bugs.md](docs/bugs.md) and [docs/todo.md](docs/todo.md).
+Automated checks cover the Phase 9 reliability work and Phase 10 responsive sessions; camera accuracy, streaming endpoint behavior, and native interaction still need hardware evaluation. Remaining gaps are tracked in [docs/bugs.md](docs/bugs.md) and [docs/todo.md](docs/todo.md).

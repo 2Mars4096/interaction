@@ -74,10 +74,10 @@
   - [x] [12-5-build-and-ci](plans/12-5-build-and-ci.md) — dependencies, packaging, and CI
 
 ## Phase 10 — Responsive Live Sessions
-- [ ] [13-responsive-live-sessions](plans/13-responsive-live-sessions.md) — sequential delivery before hardware evaluation
+- [x] [13-responsive-live-sessions](plans/13-responsive-live-sessions.md) — sequential delivery before hardware evaluation
   - [x] [13-1-continuous-fusion](plans/13-1-continuous-fusion.md) — repeated multimodal commands and recovery
   - [x] [13-2-bounded-session-history](plans/13-2-bounded-session-history.md) — bounded live memory with complete logs
-  - [ ] [13-3-streaming-speech](plans/13-3-streaming-speech.md) — real partial recognition and early turn completion
+  - [x] [13-3-streaming-speech](plans/13-3-streaming-speech.md) — real partial recognition and early turn completion
 
 ## Backlog (unphased)
 - [x] Define acceptable latency, accuracy, and accidental-action targets

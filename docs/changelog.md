@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-11 — Phase 10 Completion
+- [test] Closed all three responsive-session sections with 623 passing tests and eight passing Linux/macOS CI jobs, including installed-wheel native compilation and pre-permission streaming probes.
+- [docs] Recorded section commits, reviews, and CI evidence; clarified confirmation duration, session-stop behavior, and the implemented speech/gaze stacks. Hardware accuracy and latency evaluation remain open.
+
 ## 2026-11-11 — Phase 10 Section 3
 - [fix] Preserved confirmation prompts when displaying partial transcripts; CI caught the broad preview classifier, and recorded/streamed prompt-order regressions now pass in the 623-test suite.
 - [feat] Added opt-in native streaming speech with genuine partial previews, audio-based silence endpointing, measured capture metadata, and a separate finalization deadline.

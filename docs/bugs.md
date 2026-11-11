@@ -2,7 +2,7 @@
 
 ## Open Bugs
 
-- Phase 9 fixes are covered by automated checks. Remaining product and hardware limitations are listed below.
+- Phase 9 and Phase 10 fixes are covered by automated checks. Remaining product and hardware limitations are listed below.
 
 ## Resolved in Phase 10
 

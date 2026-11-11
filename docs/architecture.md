@@ -2,7 +2,7 @@
 
 ## Status
 
-Prototype implementation and the Phase 9 reliability repairs are complete under their documented scope; hardware evaluation remains open. This document captures the intended system shape and the concrete modules already in place.
+The implementation includes the Phase 9 reliability repairs and Phase 10 responsive live sessions: continuous fusion, bounded retained history, and opt-in streaming speech. Verification evidence is recorded in the phase plans; hardware evaluation remains open. This document captures the intended system shape and the concrete modules already in place.
 
 ## Working Assumptions
 
@@ -10,11 +10,11 @@ Prototype implementation and the Phase 9 reliability repairs are complete under 
 - **Primary development and target platform:** macOS
 - **Cross-platform intent:** yes, but later
 - **Tracking hardware for v1:** standard webcam
-- **Speech stack:** undecided
-- **Gaze / eye-tracking stack:** undecided
+- **Speech stack:** Apple Speech and AVFoundation through an Objective-C helper; recorded capture is the default, with opt-in AVAudioEngine streaming
+- **Gaze / eye-tracking stack:** OpenCV Haar face/eye detection and pupil heuristics, with calibrated coarse targets and stability gates
 - **Desktop UI / overlay surface:** terminal overlay model implemented; native macOS overlay still deferred
 
-Do not lock in vendor or library choices until the contracts phase resolves latency targets, calibration strategy, and macOS execution boundaries.
+Keep speech and gaze providers behind the typed runtime contracts so later replacements can be compared without changing broker policy or macOS execution boundaries.
 
 ## Intended System Shape
 
@@ -155,5 +155,5 @@ src/interaction/
 - `scripts/phase6_live_voice_smoke.py` is the repo-local smoke wrapper for the live macOS voice path.
 - `scripts/phase7_webcam_calibrate.py` and `scripts/phase7_live_webcam_smoke.py` are the repo-local wrappers for the webcam calibration and live-gaze tester paths.
 - `requirements-dev.lock` is the hashed universal dependency baseline; `constraints-test.txt` records deliberately selected runtime/test tool versions. Project compatibility ranges stay in `pyproject.toml`.
-- `scripts/verify_distribution.py` checks packaged native resources in wheel/sdist. `scripts/verify_installed_package.py` creates a clean environment outside the checkout and verifies imports, entry point, native resources, and optional macOS compile/cache behavior.
-- GitHub Actions covers Linux/macOS Python 3.11–3.13 unit tests and separate distribution/native-compilation checks. The installed native helper also rejects invalid streaming arguments with a versioned error before permissions/audio startup. CI uses locked build tools without build isolation and does not invoke hardware input or desktop actions.
+- `scripts/verify_distribution.py` checks packaged native resources in wheel/sdist. `scripts/verify_installed_package.py` creates a clean environment outside the checkout and verifies imports, entry point, and native resources. Optional macOS checks compile the installed helper, verify cache reuse, and probe streaming argument errors before permission requests or audio startup.
+- GitHub Actions covers Linux/macOS Python 3.11–3.13 unit tests and separate distribution/native-compilation checks. CI uses locked build tools without build isolation and does not invoke hardware input or desktop actions.
