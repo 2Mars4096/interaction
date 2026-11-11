@@ -149,6 +149,13 @@ The explicit first bounded command set is captured in `docs/command-vocabulary.m
 - Make dependencies, native speech resources, distribution builds, and Linux/macOS checks reproducible
 - Keep webcam accuracy, streaming speech, Accessibility target identity, and a native shell as separate product and hardware milestones
 
+## Phase 10 — Responsive Live Sessions
+
+- Keep one live fusion session and camera worker across successive commands and confirmations
+- Bound continuous-session memory and final output while preserving full event logs
+- Add opt-in native streaming speech with real previews, silence endpointing, and final-only execution
+- Keep measured hardware accuracy, semantic target identity, and a production native shell separate
+
 ## 8. Remaining Open Questions
 
 These are the important questions still worth resolving before implementation gets too opinionated:
@@ -171,7 +178,7 @@ Each phase should follow the same execution pattern:
 5. Run a code-review gate at phase end.
 6. Patch review findings before calling the phase complete.
 
-This repo now has explicit high-level plans and detailed subplans for Phases 1 through 9 under `docs/plans/`.
+This repo now has explicit high-level plans and detailed subplans for Phases 1 through 10 under `docs/plans/`.
 
 ## 10. Current Milestone Status
 
@@ -185,3 +192,4 @@ This repo now has explicit high-level plans and detailed subplans for Phases 1 t
 - **Phase 7:** complete with live webcam calibration, a persisted `gaze-live` tester path, webcam-specific MVP readiness updates, and a recorded review gate
 - **Phase 8:** complete with a live sequential multimodal demo path, a repo-local `phase8` smoke wrapper, structured live fusion recovery payloads, and a recorded review gate
 - **Phase 9:** complete with five sequentially reviewed and pushed reliability sections, 476 passing tests, and eight passing Linux/macOS CI jobs including installed-wheel native compilation; hardware accuracy and interaction evaluation remain open
+- **Phase 10:** in progress; continuous fusion, bounded history, and opt-in streaming speech are delivered one section at a time

@@ -9,7 +9,7 @@ Define when the first tester-facing macOS prototype is ready for a real user tri
 - `interaction voice-live` or `python scripts/phase6_live_voice_smoke.py` for real microphone capture and bounded voice commands; add `--execute` to run approved live actions
 - `interaction gaze-calibrate` or `python scripts/phase7_webcam_calibrate.py` for live webcam calibration
 - `interaction gaze-live` or `python scripts/phase7_live_webcam_smoke.py` for the live webcam gaze path; use `--action cursor|move|click|right-click|double-click|drag` for explicit gaze-only manipulation tests
-- `interaction fusion-live` or `python scripts/phase8_live_fusion_smoke.py` for a live command with concurrent webcam sensing during speech and confirmation; add `--execute` to run approved live pointer actions
+- `interaction fusion-live` or `python scripts/phase8_live_fusion_smoke.py` for live commands with concurrent webcam sensing during speech and confirmation; add `--turns N` or `--continuous` to keep one session open and `--execute` to run approved live pointer actions
 - `interaction gaze-smoke` or `python scripts/phase5_productization_smoke.py gaze-smoke` for the scripted gaze baseline
 - `python scripts/phase3_webcam_smoke.py --frames 12` for the lower-level webcam provider diagnostic
 - `interaction fusion-smoke` for the repeatable dry-run fusion path
@@ -50,7 +50,7 @@ interaction fusion-smoke
 
 ## Notes
 
-- The tester-facing path includes bounded/continuous voice command sessions, live webcam gaze, cursor follow, explicit dwell manipulation, and `fusion-live` with concurrent camera sensing during a command and confirmation. Webcam gaze remains heuristic and region-based; speech still uses recording windows, and native hardware performance remains unmeasured by the automated checks.
+- The tester-facing path includes bounded/continuous voice and fusion command sessions, live webcam gaze, cursor follow, and explicit dwell manipulation. Fusion keeps one camera worker active across commands and confirmations. Webcam gaze remains heuristic and region-based; speech still uses recording windows, and native hardware performance remains unmeasured by the automated checks.
 - The cursor-follow path exposes tunable `deadzone`, `smoothing`, `edge_padding`, and `max_step` controls for per-machine adjustment during manual testing.
 - The gaze-only dwell path now also exposes `action_cooldown_ms` and `drag_timeout_ms` controls so testers can reduce repeated clicks and recover cleanly from an abandoned drag arm.
 - This document closes the backlog item around acceptable latency, accuracy, and accidental-action targets for the first MVP trial.

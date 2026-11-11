@@ -149,11 +149,25 @@ def _build_parser() -> argparse.ArgumentParser:
     fusion_live.add_argument("--runtime-dir", default=".interaction")
     fusion_live.add_argument("--session-name", default="fusion-live")
     fusion_live.add_argument("--execute", action="store_true")
+    fusion_live.add_argument("--turns", type=_positive_int, default=1, help="Number of commands in the same session.")
+    fusion_live.add_argument("--continuous", action="store_true", help="Listen for successive commands until 'stop listening' or Ctrl-C.")
+    fusion_live.add_argument("--confirmation-attempts", type=_positive_int, default=2)
 
     replay = subparsers.add_parser("replay")
     replay.add_argument("--session-log", required=True)
     replay.add_argument("--runtime-dir", default=".interaction")
     return parser
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
+def _is_session_stop_command(utterance: str) -> bool:
+    return normalize_command(utterance).lower() in {"stop", "stop listening", "pause", "quit", "exit"}
 
 
 def _run_voice_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
@@ -200,10 +214,19 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         ))
         try:
             before = capture_environment()
-            if not effective_dry_run and before.active_app is None:
-                raise SpeechCaptureError("context_unavailable", "Cannot identify the active application. Enable Accessibility access and retry.")
             capture = provider.capture_turn(duration_s=duration, locale=args.locale)
+            # Session controls do not act on a desktop target. Honor stop
+            # before focus validation so changing/unknown focus cannot keep
+            # the microphone session running against the user's request.
+            if _is_session_stop_command(capture.transcript):
+                (confirmation_captures if confirmation else captures).append(_speech_capture_payload(capture))
+                loop.pending_decision = None
+                stopped = True
+                events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="Listening stopped.", transcript=capture.transcript))
+                return True
             after = capture_environment()
+            if not effective_dry_run and (before.active_app is None or after.active_app is None):
+                raise SpeechCaptureError("context_unavailable", "Cannot identify the active application. Enable Accessibility access and retry.")
             if before != after:
                 loop.pending_decision = None
                 raise SpeechCaptureError("context_changed", "The active application or window changed while listening. Please repeat the command.")
@@ -227,7 +250,6 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
             final_confidence=capture.confidence,
             begin_turn=False,
         ))
-        stopped = normalize_command(capture.transcript).lower() in {"stop", "stop listening", "pause", "quit", "exit"}
         return True
 
     try:
@@ -605,11 +627,18 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
     renderer = ConsoleOverlayRenderer()
     events = LiveEventBuffer("fusion", logger, overlay)
     live_gaze_context: dict[str, Any] = {}
-    live_capture = None
-    confirmation_capture = None
+    captures: list[dict[str, Any]] = []
+    confirmation_captures: list[dict[str, Any]] = []
     sampler = None
-    capture_stage = "command"
     gaze_revision = None
+    stopped = False
+    failed = False
+    commands = 0
+
+    def cancel_pending():
+        if loop.pending_decision is not None:
+            loop.pending_decision = None
+            loop.metrics.cancellations += 1
 
     def update_current_gaze():
         nonlocal gaze_revision
@@ -626,6 +655,7 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             events.append(loop.clear_gaze_context(observed_at_ms=snapshot.observed_at_ms))
         gaze_revision = snapshot.revision
         events.append(loop.update_gaze_context(snapshot.observation, snapshot.target, observed_at_ms=snapshot.observed_at_ms))
+        live_gaze_context.clear()
         live_gaze_context.update({
             "status": "success", "target": snapshot.target.model_dump(mode="json"),
             "observation": snapshot.observation.model_dump(mode="json"), "observed_at_ms": snapshot.observed_at_ms,
@@ -633,22 +663,46 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
                               "confidence_kind": "detector_heuristic"},
         })
 
-    def capture_command(provider, *, confirmation=False):
-        before = capture_environment()
-        if not effective_dry_run and before.active_app is None:
-            raise SpeechCaptureError("context_unavailable", "Cannot identify the active application. Enable Accessibility access and retry.")
+    def capture_command(provider, *, confirmation=False) -> bool:
+        nonlocal stopped, failed
+        history = confirmation_captures if confirmation else captures
         events.append(FusionFeedbackEvent(
             phase=FusionLoopPhase.CONFIRMING if confirmation else FusionLoopPhase.TRACKING,
-            message="Listening for confirmation or cancel." if confirmation else "Listening. Gaze tracking remains active.",
+            message="Listening for confirmation or cancel." if confirmation else "Listening. Gaze tracking remains active. Say 'stop listening' to finish.",
         ))
-        capture = provider.capture_turn(duration_s=args.confirm_duration if confirmation else args.duration, locale=args.locale)
-        after = capture_environment()
-        if before != after:
-            loop.pending_decision = None
-            raise SpeechCaptureError("context_changed", "The active application or window changed while listening. Please repeat the command.")
+        try:
+            before = capture_environment()
+            capture = provider.capture_turn(duration_s=args.confirm_duration if confirmation else args.duration, locale=args.locale)
+            # Stop cancels work without requiring a target, usable focus, or
+            # a healthy camera snapshot. No action is dispatched on this path.
+            if _is_session_stop_command(capture.transcript):
+                history.append(_speech_capture_payload(capture))
+                cancel_pending()
+                stopped = True
+                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="Listening stopped.", transcript=capture.transcript))
+                return True
+            after = capture_environment()
+            if not effective_dry_run and (before.active_app is None or after.active_app is None):
+                raise SpeechCaptureError("context_unavailable", "Cannot identify the active application. Enable Accessibility access and retry.")
+            if before != after:
+                raise SpeechCaptureError("context_changed", "The active application or window changed while listening. Please repeat the command.")
+        except SpeechCaptureError as error:
+            history.append({"status": "error", "error": error.code, "message": error.message, "payload": error.payload})
+            if error.code == "empty_transcript" and (args.continuous or confirmation):
+                update_current_gaze()
+                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.TRACKING, message="No speech heard."))
+                return True
+            cancel_pending()
+            events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
+            if error.code == "context_changed" and args.continuous:
+                update_current_gaze()
+                return True
+            failed = True
+            return False
+        history.append(_speech_capture_payload(capture))
         update_current_gaze()
         events.extend(loop.run_voice_turn(capture.transcript, after, final_confidence=capture.confidence))
-        return _speech_capture_payload(capture)
+        return True
 
     try:
         if profile is None:
@@ -663,31 +717,35 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             raise WebcamProviderError("missing_gaze_lock", "No stable gaze target was established. Look steadily at a large target and retry.")
         update_current_gaze()
         provider = MacOSLiveSpeechProvider(store.paths)
-        live_capture = capture_command(provider)
-        if loop.pending_decision is not None:
-            capture_stage = "confirmation"
-            confirmation_capture = capture_command(provider, confirmation=True)
+        while not stopped and (args.continuous or commands < args.turns):
+            if not capture_command(provider):
+                break
+            if captures[-1]["status"] == "success":
+                commands += 1
+            attempts = 0
+            while not stopped and loop.pending_decision is not None and attempts < args.confirmation_attempts:
+                attempts += 1
+                if not capture_command(provider, confirmation=True):
+                    break
             if loop.pending_decision is not None:
-                loop.pending_decision = None
+                cancel_pending()
                 events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="The action was cancelled because no clear confirmation arrived."))
+            if failed:
+                break
     except WebcamProviderError as error:
+        failed = True
         live_gaze_context = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
         events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
-    except SpeechCaptureError as error:
-        failure = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
-        if capture_stage == "confirmation":
-            confirmation_capture = failure
-        else:
-            live_capture = failure
-        events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
     except KeyboardInterrupt:
+        stopped = True
         events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="Fusion session stopped."))
     finally:
-        loop.pending_decision = None
+        cancel_pending()
         if sampler is not None:
             try:
                 sampler.stop()
             except WebcamProviderError as error:
+                failed = True
                 live_gaze_context.update({"status": "error", "error": error.code, "message": error.message})
                 events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
             live_gaze_context.update(sampler.summary())
@@ -696,8 +754,11 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
         source="fusion", events=events, logger=logger, overlay=overlay, renderer=renderer,
         extra={
             "settings": _settings_payload(settings, effective_dry_run), "camera_index": camera_index,
-            "live_gaze_context": live_gaze_context, "live_capture": live_capture,
-            "confirmation_capture": confirmation_capture, "metrics": loop.metrics.to_dict(),
+            "live_gaze_context": live_gaze_context, "live_capture": captures[-1] if captures else None,
+            "confirmation_capture": confirmation_captures[-1] if confirmation_captures else None,
+            "captures": captures, "confirmation_captures": confirmation_captures,
+            "session": {"commands": commands, "stopped": stopped, "failed": failed},
+            "metrics": loop.metrics.to_dict(),
             "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
             "calibration_profile": _profile_to_payload(profile) if profile else None,
         },

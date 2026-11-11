@@ -36,7 +36,7 @@ The current implementation is still intentionally limited:
 - live webcam use depends on macOS camera permission and remains heuristic rather than precision-grade
 - live webcam gaze requires a current validated `webcam-live` profile for the selected camera
 - the current fusion strategy only reasons over recent grounded targets, not a richer desktop-semantic target graph
-- live fusion runs one command and any required confirmation while a single camera worker maintains fresh gaze context
+- live fusion supports single, bounded, or continuous command sessions while a single camera worker maintains fresh gaze context
 - the overlay is terminal-rendered for now, not a native always-on-top macOS overlay
 
 Manual Phase 1 smoke harness:
@@ -167,7 +167,21 @@ Say `stop listening` or press Ctrl-C to finish. Required confirmations are captu
 
 Commands accept ordinary sentence punctuation and polite prefixes. `click`, `right click`, and `double click` refer to gaze targets in fusion; voice-only use asks for a target. Dictated punctuation and spacing are preserved. Explicitly low-confidence recognition asks for a repeat instead of executing.
 
-The microphone provider still records bounded audio windows; continuous sessions currently repeat those captures. Streaming recognition and a native desktop shell are separate work.
+The microphone provider still records bounded audio windows; continuous sessions currently repeat those captures. Streaming recognition is the next planned section; a native desktop shell remains separate work.
+
+### Repeated voice-and-gaze commands
+
+After calibration, keep one camera session open for several commands:
+
+```bash
+interaction fusion-live --turns 3
+interaction fusion-live --continuous
+interaction fusion-live --continuous --confirmation-attempts 2 --execute
+```
+
+Say `stop listening` or press Ctrl-C to finish; `cancel` abandons only the pending action. Continuous sessions recover from silence and foreground changes so you can repeat a command. A confirmation has a bounded retry budget, and exhausting it cancels the pending action. Permission and camera failures end the session with structured feedback. The default remains one command.
+
+Each command and follow-up uses current gaze and foreground context. Loss of tracking after startup allows voice-only commands and session stop, while pointer commands must regain a valid target. Final JSON includes command/confirmation captures and `session` counts, with the existing last-capture fields retained. `session.commands` counts successful primary captures, including a spoken stop; fusion's separate `metrics.executions` counts executed action results.
 
 ### Live context and cancellation
 

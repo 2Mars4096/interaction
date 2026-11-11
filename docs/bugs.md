@@ -4,6 +4,12 @@
 
 - Phase 9 fixes are covered by automated checks. Remaining product and hardware limitations are listed below.
 
+## Resolved in Phase 10
+
+- Section 1: live fusion no longer ends after one command when `--turns` or `--continuous` is requested; confirmation silence has a bounded retry budget, and camera ownership spans the full session.
+- Section 1: successful reacquisition removes stale tracking-loss error fields from the final gaze status.
+- Section 1: spoken session stop is handled independently of foreground/target action authorization, so focus changes cannot discard a stop request.
+
 ## Resolved in Phase 9
 
 - Section 5: OpenCV compatibility is bounded below 5, the tested dependency baseline is hashed, and wheel/sdist/install checks require the native helper and permission metadata.
@@ -37,7 +43,7 @@
 - **Gaze-control limitation:** `gaze-live` now has continuous `cursor` follow plus explicit dwell-triggered move/click/right-click/double-click/drag modes, but they are still coarse tester modes and can misfire on small targets or unstable lighting.
 - **Cursor-follow limitation:** the new `cursor` mode uses smoothing, deadzone, edge padding, and max-step heuristics rather than true calibrated eye-tracker dynamics, so some per-machine tuning may still be needed.
 - **Fusion-grounding limitation:** the multimodal fusion loop currently grounds deictic voice commands against the latest fresh gaze target window rather than a richer desktop-semantic target set.
-- **Live-fusion orchestration limitation:** `fusion-live` maintains concurrent camera capture through one command and confirmation, but speech still uses fixed windows and gaze binding happens at command finalization.
+- **Live-fusion orchestration limitation:** `fusion-live` maintains concurrent camera capture across repeated commands and confirmations, but speech still uses fixed windows and gaze binding happens at command finalization.
 - **Focus-identity limitation:** foreground app/window checks do not identify exact editable fields or detect a transient focus change that returns before the next probe. Accessibility target identity remains needed.
 - **Fusion-threshold limitation:** fused confidence uses fixed heuristic weights and a static clarification threshold; those values have not been tuned against real user-session data yet.
 - **Overlay limitation:** the current productization layer exposes a terminal-rendered overlay snapshot rather than a native always-on-top macOS overlay.

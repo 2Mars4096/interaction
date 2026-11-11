@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-11 — Phase 10 Section 1
+- [feat] Added repeated `fusion-live` sessions with one camera owner, bounded confirmation retries, explicit stop, and structured session results.
+- [fix] Cleared stale gaze error fields on reacquisition and separated session stop from action-context authorization.
+- [docs] Planned sequential continuous-session, bounded-history, and streaming-speech work after the completed reliability phase.
+
 ## 2026-11-11 — Section 5
 - [test] Closed the five-section reliability plan with 476 passing tests and eight passing Linux/macOS CI jobs, including installed-wheel native helper compilation and cache reuse on macOS ARM64.
 - [infra] Corrected the first published workflow to use supported macOS 15 runners after GitHub cancelled the retired macOS 14 jobs.

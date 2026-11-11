@@ -122,3 +122,41 @@ def test_continuous_session_recovers_from_changed_context(monkeypatch, tmp_path)
     assert results[0]["proposal"]["arguments"]["direction"] == "up"
     assert payload["session"]["stopped"]
     assert not payload["session"]["failed"]
+
+
+def test_stop_does_not_require_a_second_matching_context_probe(monkeypatch, tmp_path):
+    probes = []
+
+    def environment():
+        probes.append(True)
+        return EnvironmentSnapshot(active_app="Notes" if len(probes) == 1 else "Terminal")
+
+    monkeypatch.setattr("interaction.app.capture_environment", environment)
+    payload, before, _ = run_session(monkeypatch, tmp_path, ["stop listening"], "--continuous")
+    assert len(before) == 1
+    assert len(probes) == 1
+    assert payload["session"]["stopped"] and not payload["session"]["failed"]
+    assert not any(event["result"] for event in payload["events"])
+
+
+def test_stop_is_heard_with_unknown_focus_in_execute_mode(monkeypatch, tmp_path):
+    monkeypatch.setattr("interaction.app.capture_environment", EnvironmentSnapshot)
+    payload, before, _ = run_session(monkeypatch, tmp_path, ["stop listening"], "--execute", "--continuous")
+    assert len(before) == 1
+    assert payload["session"]["stopped"] and not payload["session"]["failed"]
+    assert not any(event["result"] for event in payload["events"])
+
+
+def test_unknown_focus_still_blocks_normal_live_execution(monkeypatch, tmp_path):
+    monkeypatch.setattr("interaction.app.capture_environment", EnvironmentSnapshot)
+    payload, _, _ = run_session(monkeypatch, tmp_path, ["scroll down"], "--execute")
+    assert payload["live_capture"]["error"] == "context_unavailable"
+    assert payload["session"]["failed"]
+    assert not any(event["result"] for event in payload["events"])
+
+
+def test_stop_during_confirmation_cancels_pending_typing(monkeypatch, tmp_path):
+    payload, before, _ = run_session(monkeypatch, tmp_path, ["type example", "stop listening"], "--continuous")
+    assert len(before) == 2
+    assert payload["session"]["stopped"] and not payload["session"]["failed"]
+    assert not any(event["result"] for event in payload["events"])
