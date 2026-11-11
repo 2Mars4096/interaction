@@ -21,12 +21,13 @@ from interaction.feedback import (
 )
 from interaction.persistence import JsonStateStore, RuntimePaths
 from interaction.platform import MacOSPlatformAdapter
+from interaction.platform.environment import capture_environment
+from interaction.runtime.live_gaze import LiveGazeSampler
 from interaction.runtime import (
     GazeTrackingLoop,
     MultimodalFusionLoop,
     VoiceCommandLoop,
     WebcamCalibrationError,
-    capture_live_gaze_context,
     collect_webcam_calibration,
     default_webcam_calibration_targets,
     default_webcam_targets,
@@ -141,7 +142,7 @@ def _build_parser() -> argparse.ArgumentParser:
     fusion_live = subparsers.add_parser("fusion-live")
     fusion_live.add_argument("--camera-index", type=int, default=None)
     fusion_live.add_argument("--gaze-frames", type=int, default=12)
-    fusion_live.add_argument("--gaze-delta-ms", type=int, default=100)
+    fusion_live.add_argument("--gaze-delta-ms", type=int, default=100, help="Minimum delay between camera samples; freshness uses actual elapsed time.")
     fusion_live.add_argument("--duration", type=float, default=4.0)
     fusion_live.add_argument("--confirm-duration", type=float, default=2.5)
     fusion_live.add_argument("--locale", default="en-US")
@@ -198,7 +199,14 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
             message="Listening for confirmation or cancel." if confirmation else "Listening. Say a command, or 'stop listening' to finish.",
         ))
         try:
+            before = capture_environment()
+            if not effective_dry_run and before.active_app is None:
+                raise SpeechCaptureError("context_unavailable", "Cannot identify the active application. Enable Accessibility access and retry.")
             capture = provider.capture_turn(duration_s=duration, locale=args.locale)
+            after = capture_environment()
+            if before != after:
+                loop.pending_decision = None
+                raise SpeechCaptureError("context_changed", "The active application or window changed while listening. Please repeat the command.")
         except SpeechCaptureError as error:
             payload = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
             (confirmation_captures if confirmation else captures).append(payload)
@@ -207,13 +215,15 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
                 return True
             events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message=error.message))
             loop.pending_decision = None
+            if error.code == "context_changed" and args.continuous:
+                return True
             failed = True
             return False
         payload = _speech_capture_payload(capture)
         (confirmation_captures if confirmation else captures).append(payload)
         events.extend(loop.run_text_turn(
             capture.transcript,
-            EnvironmentSnapshot(),
+            after,
             final_confidence=capture.confidence,
             begin_turn=False,
         ))
@@ -572,272 +582,101 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
-
-    if profile is None:
-        events: list[object] = [
-            FusionFeedbackEvent(
-                phase=FusionLoopPhase.RECOVERING,
-                message="No live webcam calibration profile is saved yet. Run `interaction gaze-calibrate` first.",
-            ),
-            FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."),
-        ]
-        return _build_payload(
-            source="fusion",
-            events=events,
-            logger=logger,
-            overlay=overlay,
-            renderer=renderer,
-            extra={
-                "settings": _settings_payload(settings, effective_dry_run),
-                "camera_index": camera_index,
-                "live_gaze_context": {
-                    "status": "error",
-                    "error": "missing_calibration_profile",
-                    "message": "No live webcam calibration profile is saved yet. Run `interaction gaze-calibrate` first.",
-                },
-                "live_capture": None,
-                "confirmation_capture": None,
-                "metrics": loop.metrics.to_dict(),
-                "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
-                "calibration_profile": None,
-            },
-        )
-
-    environment = EnvironmentSnapshot()
     events = LiveEventBuffer("fusion", logger, overlay)
-    events.extend([
-        FusionFeedbackEvent(
-            phase=FusionLoopPhase.TRACKING,
-            message=f"Capturing live gaze context from webcam for {args.gaze_frames} frames.",
-        )
-    ])
-    provider = OpenCVWebcamGazeProvider(camera_index=camera_index)
-    live_gaze_context: dict[str, Any]
+    live_gaze_context: dict[str, Any] = {}
+    live_capture = None
+    confirmation_capture = None
+    sampler = None
+    capture_stage = "command"
+    gaze_revision = None
+
+    def update_current_gaze():
+        nonlocal gaze_revision
+        snapshot = sampler.latest()
+        if snapshot is None:
+            events.append(loop.clear_gaze_context())
+            live_gaze_context.clear()
+            live_gaze_context.update({
+                "status": "unavailable", "error": "gaze_tracking_lost",
+                "message": "No fresh stable gaze target is available.",
+            })
+            return
+        if gaze_revision is not None and snapshot.revision != gaze_revision:
+            events.append(loop.clear_gaze_context(observed_at_ms=snapshot.observed_at_ms))
+        gaze_revision = snapshot.revision
+        events.append(loop.update_gaze_context(snapshot.observation, snapshot.target, observed_at_ms=snapshot.observed_at_ms))
+        live_gaze_context.update({
+            "status": "success", "target": snapshot.target.model_dump(mode="json"),
+            "observation": snapshot.observation.model_dump(mode="json"), "observed_at_ms": snapshot.observed_at_ms,
+        })
+
+    def capture_command(provider, *, confirmation=False):
+        before = capture_environment()
+        if not effective_dry_run and before.active_app is None:
+            raise SpeechCaptureError("context_unavailable", "Cannot identify the active application. Enable Accessibility access and retry.")
+        events.append(FusionFeedbackEvent(
+            phase=FusionLoopPhase.CONFIRMING if confirmation else FusionLoopPhase.TRACKING,
+            message="Listening for confirmation or cancel." if confirmation else "Listening. Gaze tracking remains active.",
+        ))
+        capture = provider.capture_turn(duration_s=args.confirm_duration if confirmation else args.duration, locale=args.locale)
+        after = capture_environment()
+        if before != after:
+            loop.pending_decision = None
+            raise SpeechCaptureError("context_changed", "The active application or window changed while listening. Please repeat the command.")
+        update_current_gaze()
+        events.extend(loop.run_voice_turn(capture.transcript, after, final_confidence=capture.confidence))
+        return _speech_capture_payload(capture)
+
     try:
-        provider.open()
-        gaze_context, gaze_events, gaze_summary = capture_live_gaze_context(
-            provider,
-            profile,
-            frames=args.gaze_frames,
-            delta_ms=args.gaze_delta_ms,
-            targets=default_webcam_targets(),
-        )
-        events.extend(gaze_events)
+        if profile is None:
+            raise WebcamProviderError("missing_calibration_profile", "No live webcam calibration profile is saved yet. Run `interaction gaze-calibrate` first.")
+        events.append(FusionFeedbackEvent(phase=FusionLoopPhase.TRACKING, message="Starting gaze tracking. Look steadily at a target."))
+        sampler = LiveGazeSampler(OpenCVWebcamGazeProvider(camera_index=camera_index), profile,
+                                  max_age_ms=settings.gaze_context_window_ms,
+                                  interval_s=max(5, args.gaze_delta_ms) / 1000)
+        sampler.start()
+        initial = sampler.wait_for_target(max_frames=max(3, args.gaze_frames))
+        if initial is None:
+            raise WebcamProviderError("missing_gaze_lock", "No stable gaze target was established. Look steadily at a large target and retry.")
+        update_current_gaze()
+        provider = MacOSLiveSpeechProvider(store.paths)
+        live_capture = capture_command(provider)
+        if loop.pending_decision is not None:
+            capture_stage = "confirmation"
+            confirmation_capture = capture_command(provider, confirmation=True)
+            if loop.pending_decision is not None:
+                loop.pending_decision = None
+                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="The action was cancelled because no clear confirmation arrived."))
     except WebcamProviderError as error:
+        live_gaze_context = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
         events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
-        events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
-        live_gaze_context = {
-            "status": "error",
-            "error": error.code,
-            "message": error.message,
-            "payload": error.payload,
-        }
-        return _build_payload(
-            source="fusion",
-            events=events,
-            logger=logger,
-            overlay=overlay,
-            renderer=renderer,
-            extra={
-                "settings": _settings_payload(settings, effective_dry_run),
-                "camera_index": camera_index,
-                "live_gaze_context": live_gaze_context,
-                "live_capture": None,
-                "confirmation_capture": None,
-                "metrics": loop.metrics.to_dict(),
-                "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
-                "calibration_profile": _profile_to_payload(profile),
-            },
-        )
-    finally:
-        provider.close()
-
-    if gaze_context is None:
-        events.append(
-            FusionFeedbackEvent(
-                phase=FusionLoopPhase.RECOVERING,
-                message="No grounded live gaze target was established. Look steadily at a large target and retry.",
-            )
-        )
-        events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
-        live_gaze_context = {
-            "status": "error",
-            "error": "missing_gaze_lock",
-            "message": "No grounded live gaze target was established. Look steadily at a large target and retry.",
-            **gaze_summary,
-        }
-        return _build_payload(
-            source="fusion",
-            events=events,
-            logger=logger,
-            overlay=overlay,
-            renderer=renderer,
-            extra={
-                "settings": _settings_payload(settings, effective_dry_run),
-                "camera_index": camera_index,
-                "live_gaze_context": live_gaze_context,
-                "live_capture": None,
-                "confirmation_capture": None,
-                "metrics": loop.metrics.to_dict(),
-                "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
-                "calibration_profile": _profile_to_payload(profile),
-            },
-        )
-
-    live_gaze_context = {
-        "status": "success",
-        "target": gaze_context.target.model_dump(mode="json"),
-        "observation": gaze_context.observation.model_dump(mode="json"),
-        "attempted_frames": gaze_context.attempted_frames,
-        "successful_readings": gaze_context.successful_readings,
-        "missing_readings": gaze_context.missing_readings,
-        "grounded_readings": gaze_context.grounded_readings,
-        "dominant_target_hits": gaze_context.dominant_target_hits,
-    }
-    events.append(loop.update_gaze_context(gaze_context.observation, gaze_context.target))
-
-    speech_provider = MacOSLiveSpeechProvider(store.paths)
-    live_capture: dict[str, Any] | None = None
-    confirmation_capture: dict[str, Any] | None = None
-    events.append(
-        FusionFeedbackEvent(
-            phase=FusionLoopPhase.TRACKING,
-            message=f"Starting live macOS speech capture for {args.duration:.1f}s.",
-        )
-    )
-    try:
-        capture = speech_provider.capture_turn(duration_s=args.duration, locale=args.locale)
     except SpeechCaptureError as error:
+        failure = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
+        if capture_stage == "confirmation":
+            confirmation_capture = failure
+        else:
+            live_capture = failure
         events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
-        events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle."))
-        live_capture = {
-            "status": "error",
-            "error": error.code,
-            "message": error.message,
-            "payload": error.payload,
-        }
-        return _build_payload(
-            source="fusion",
-            events=events,
-            logger=logger,
-            overlay=overlay,
-            renderer=renderer,
-            extra={
-                "settings": _settings_payload(settings, effective_dry_run),
-                "camera_index": camera_index,
-                "live_gaze_context": live_gaze_context,
-                "live_capture": live_capture,
-                "confirmation_capture": confirmation_capture,
-                "metrics": loop.metrics.to_dict(),
-                "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
-                "calibration_profile": _profile_to_payload(profile),
-            },
-        )
-
-    live_capture = {
-        "status": "success",
-        "transcript": capture.transcript,
-        "confidence": capture.confidence,
-        "locale": capture.locale,
-        "duration_s": capture.duration_s,
-        "provider": capture.provider,
-        "used_on_device": capture.used_on_device,
-        "permission_state": capture.permission_state,
-    }
-    events.append(
-        FusionFeedbackEvent(
-            phase=FusionLoopPhase.INTERPRETING,
-            transcript=capture.transcript,
-            message="Live macOS speech capture completed for fusion.",
-            target=gaze_context.target,
-        )
-    )
-    events.extend(
-        loop.run_voice_turn(
-            capture.transcript,
-            environment,
-            final_confidence=capture.confidence,
-        )
-    )
-
-    if loop.pending_decision is not None:
-        events.append(
-            FusionFeedbackEvent(
-                phase=FusionLoopPhase.CONFIRMING,
-                message=f"Starting live confirmation capture for {args.confirm_duration:.1f}s.",
-                target=gaze_context.target,
-            )
-        )
-        try:
-            confirmation = speech_provider.capture_turn(duration_s=args.confirm_duration, locale=args.locale)
-        except SpeechCaptureError as error:
-            events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message, target=gaze_context.target))
-            events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion loop is idle.", target=gaze_context.target))
-            confirmation_capture = {
-                "status": "error",
-                "error": error.code,
-                "message": error.message,
-                "payload": error.payload,
-            }
-            return _build_payload(
-                source="fusion",
-                events=events,
-                logger=logger,
-                overlay=overlay,
-                renderer=renderer,
-                extra={
-                    "settings": _settings_payload(settings, effective_dry_run),
-                    "camera_index": camera_index,
-                    "live_gaze_context": live_gaze_context,
-                    "live_capture": live_capture,
-                    "confirmation_capture": confirmation_capture,
-                    "metrics": loop.metrics.to_dict(),
-                    "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
-                    "calibration_profile": _profile_to_payload(profile),
-                },
-            )
-
-        confirmation_capture = {
-            "status": "success",
-            "transcript": confirmation.transcript,
-            "confidence": confirmation.confidence,
-            "locale": confirmation.locale,
-            "duration_s": confirmation.duration_s,
-            "provider": confirmation.provider,
-            "used_on_device": confirmation.used_on_device,
-            "permission_state": confirmation.permission_state,
-        }
-        events.append(
-            FusionFeedbackEvent(
-                phase=FusionLoopPhase.INTERPRETING,
-                transcript=confirmation.transcript,
-                message="Live macOS confirmation capture completed.",
-                target=gaze_context.target,
-            )
-        )
-        events.extend(
-            loop.run_voice_turn(
-                confirmation.transcript,
-                environment,
-                final_confidence=confirmation.confidence,
-            )
-        )
-
+    except KeyboardInterrupt:
+        events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="Fusion session stopped."))
+    finally:
+        loop.pending_decision = None
+        if sampler is not None:
+            try:
+                sampler.stop()
+            except WebcamProviderError as error:
+                live_gaze_context.update({"status": "error", "error": error.code, "message": error.message})
+                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
+            live_gaze_context.update(sampler.summary())
+    events.append(FusionFeedbackEvent(phase=FusionLoopPhase.IDLE, message="Fusion session ended."))
     return _build_payload(
-        source="fusion",
-        events=events,
-        logger=logger,
-        overlay=overlay,
-        renderer=renderer,
+        source="fusion", events=events, logger=logger, overlay=overlay, renderer=renderer,
         extra={
-            "settings": _settings_payload(settings, effective_dry_run),
-            "camera_index": camera_index,
-            "live_gaze_context": live_gaze_context,
-            "live_capture": live_capture,
-            "confirmation_capture": confirmation_capture,
-            "metrics": loop.metrics.to_dict(),
+            "settings": _settings_payload(settings, effective_dry_run), "camera_index": camera_index,
+            "live_gaze_context": live_gaze_context, "live_capture": live_capture,
+            "confirmation_capture": confirmation_capture, "metrics": loop.metrics.to_dict(),
             "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
-            "calibration_profile": _profile_to_payload(profile),
+            "calibration_profile": _profile_to_payload(profile) if profile else None,
         },
     )
 

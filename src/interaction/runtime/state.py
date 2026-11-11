@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from interaction.contracts import GazeObservation, GroundedTarget
 
+from .clock import Clock, monotonic_ms
+
 
 @dataclass(frozen=True)
 class GazeContextEntry:
@@ -25,29 +27,65 @@ class TranscriptEntry:
 class SharedInteractionState:
     """Keep a short history of gaze and voice context for fusion."""
 
-    def __init__(self, *, gaze_context_window_ms: int = 1500, max_history: int = 12) -> None:
+    def __init__(
+        self,
+        *,
+        gaze_context_window_ms: int = 1500,
+        max_history: int = 12,
+        clock: Clock = monotonic_ms,
+    ) -> None:
         self.gaze_context_window_ms = gaze_context_window_ms
-        self.now_ms = 0
+        self._clock = clock
+        self._simulation_offset_ms = 0
+        self._last_gaze_at_ms: int | None = None
+        self.gaze_revision = 0
         self.gaze_history: deque[GazeContextEntry] = deque(maxlen=max_history)
         self.transcript_history: deque[TranscriptEntry] = deque(maxlen=max_history)
 
+    @property
+    def now_ms(self) -> int:
+        return self._clock() + self._simulation_offset_ms
+
     def advance(self, delta_ms: int) -> int:
-        self.now_ms += max(0, delta_ms)
+        """Advance scripted time explicitly; live input uses actual timestamps."""
+        self._simulation_offset_ms += max(0, delta_ms)
         return self.now_ms
 
-    def record_gaze(self, observation: GazeObservation, target: GroundedTarget | None, *, delta_ms: int | None = None) -> None:
-        if delta_ms is None:
-            delta_ms = observation.fixation_ms or 0
-        self.advance(delta_ms)
-        if target is None:
+    def record_gaze(
+        self,
+        observation: GazeObservation,
+        target: GroundedTarget | None,
+        *,
+        delta_ms: int | None = None,
+        observed_at_ms: int | None = None,
+    ) -> None:
+        if delta_ms is not None:
+            self.advance(delta_ms)
+        now = self.now_ms
+        observed_at = now if observed_at_ms is None else observed_at_ms
+        # Never turn delayed input into a fresh sample, or let an out-of-order
+        # reading revive a target that was subsequently lost.
+        if observed_at > now or (self._last_gaze_at_ms is not None and observed_at < self._last_gaze_at_ms):
             return
+        self._last_gaze_at_ms = observed_at
+        if target is None:
+            self.clear_gaze(observed_at_ms=observed_at)
+            return
+        previous = self.gaze_history[-1].target.target_id if self.gaze_history else None
+        if previous != target.target_id:
+            self.gaze_revision += 1
         self.gaze_history.append(
             GazeContextEntry(
-                observed_at_ms=self.now_ms,
+                observed_at_ms=observed_at,
                 observation=observation,
                 target=target,
             )
         )
+
+    def clear_gaze(self, *, observed_at_ms: int | None = None) -> None:
+        self.gaze_history.clear()
+        self.gaze_revision += 1
+        self._last_gaze_at_ms = self.now_ms if observed_at_ms is None else observed_at_ms
 
     def record_transcript(self, utterance: str, *, confidence: float | None = None, delta_ms: int = 0) -> None:
         self.advance(delta_ms)
@@ -64,7 +102,7 @@ class SharedInteractionState:
         return entry.target if entry is not None else None
 
     def latest_target_age_ms(self) -> int | None:
-        entry = self._latest_entry()
+        entry = self.gaze_history[-1] if self.gaze_history else None
         if entry is None:
             return None
         return self.now_ms - entry.observed_at_ms
@@ -78,10 +116,13 @@ class SharedInteractionState:
         return observation.confidence if observation is not None else None
 
     def candidate_targets(self, *, limit: int = 3) -> list[GroundedTarget]:
+        if limit <= 0:
+            return []
         candidates: list[GroundedTarget] = []
         seen_ids: set[str] = set()
+        now = self.now_ms
         for entry in reversed(self.gaze_history):
-            if self.now_ms - entry.observed_at_ms > self.gaze_context_window_ms:
+            if not 0 <= now - entry.observed_at_ms <= self.gaze_context_window_ms:
                 continue
             if entry.target.target_id in seen_ids:
                 continue
@@ -93,7 +134,7 @@ class SharedInteractionState:
 
     def latest_target_is_fresh(self) -> bool:
         age = self.latest_target_age_ms()
-        return age is not None and age <= self.gaze_context_window_ms
+        return age is not None and 0 <= age <= self.gaze_context_window_ms
 
     def stale_reason(self) -> str:
         candidates = self.candidate_targets(limit=2)
@@ -103,7 +144,7 @@ class SharedInteractionState:
         return f'My recent gaze context is stale or ambiguous. Recent targets: {labels}.'
 
     def _latest_entry(self) -> GazeContextEntry | None:
-        for entry in reversed(self.gaze_history):
-            if self.now_ms - entry.observed_at_ms <= self.gaze_context_window_ms:
-                return entry
-        return None
+        if not self.gaze_history:
+            return None
+        entry = self.gaze_history[-1]
+        return entry if 0 <= self.now_ms - entry.observed_at_ms <= self.gaze_context_window_ms else None

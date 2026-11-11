@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from interaction.audio import ScriptedTranscriber
-from interaction.contracts import BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget
+from interaction.contracts import BrokerDecision, BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget
 from interaction.control import CommandBroker
 from interaction.feedback import FusionFeedbackEvent, FusionLoopPhase
 from interaction.intent import FusionIntentResolver, VoiceDirectiveType, VoiceIntentInterpreter
 from interaction.platform import MacOSPlatformAdapter, PlatformAdapter
 
+from .pending import PendingAction
 from .state import SharedInteractionState
 
 
@@ -48,6 +49,8 @@ class MultimodalFusionLoop:
         state: SharedInteractionState | None = None,
         metrics: FusionMetrics | None = None,
         min_recognition_confidence: float = 0.6,
+        pending_timeout_ms: int = 15_000,
+        max_confirmation_gaze_distance: float = 0.08,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
@@ -57,15 +60,73 @@ class MultimodalFusionLoop:
         self.state = state or SharedInteractionState()
         self.metrics = metrics or FusionMetrics()
         self.min_recognition_confidence = min_recognition_confidence
+        self.pending_timeout_ms = max(1, pending_timeout_ms)
+        self.max_confirmation_gaze_distance = max(0.0, max_confirmation_gaze_distance)
         self.pending_decision = None
 
-    def update_gaze_context(self, observation: GazeObservation, target: GroundedTarget | None) -> FusionFeedbackEvent:
-        self.state.record_gaze(observation, target)
-        message = f'Updated gaze context with "{target.label}".' if target else "No grounded target was recorded."
+    @property
+    def pending_decision(self) -> BrokerDecision | None:
+        return self._pending_decision
+
+    @pending_decision.setter
+    def pending_decision(self, decision: BrokerDecision | None) -> None:
+        self._pending_decision = decision
+        self._pending_action: PendingAction | None = None
+
+    def _set_pending(self, decision: BrokerDecision, environment: EnvironmentSnapshot) -> None:
+        self.pending_decision = decision
+        self._pending_action = PendingAction(
+            decision=decision,
+            environment=environment.model_copy(deep=True),
+            created_at_ms=self.state.now_ms,
+            gaze_revision=self.state.gaze_revision,
+        )
+
+    def _pending_invalid_reason(self, environment: EnvironmentSnapshot) -> str | None:
+        if self.pending_decision is None:
+            return None
+        if self._pending_action is None:
+            return "The pending action has no captured context. Please repeat the command."
+        target = self.state.latest_target()
+        return self._pending_action.invalid_reason(
+            now_ms=self.state.now_ms,
+            timeout_ms=self.pending_timeout_ms,
+            environment=environment,
+            current_target_id=target.target_id if target is not None else None,
+            observation=self.state.latest_observation(),
+            gaze_revision=self.state.gaze_revision,
+            max_gaze_distance=self.max_confirmation_gaze_distance,
+        )
+
+    def clear_gaze_context(self, *, observed_at_ms: int | None = None) -> FusionFeedbackEvent:
+        self.state.clear_gaze(observed_at_ms=observed_at_ms)
+        message = "Gaze tracking was lost. Look at the target to reacquire it."
+        if self._pending_action is not None and self._pending_action.requires_gaze:
+            self.pending_decision = None
+            self.metrics.cancellations += 1
+            message = "The pending pointer action was cancelled because gaze tracking was lost."
+        return FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=message)
+
+    def update_gaze_context(
+        self,
+        observation: GazeObservation,
+        target: GroundedTarget | None,
+        *,
+        observed_at_ms: int | None = None,
+    ) -> FusionFeedbackEvent:
+        self.state.record_gaze(observation, target, observed_at_ms=observed_at_ms)
+        if self._pending_action is not None and self._pending_action.requires_gaze:
+            reason = self._pending_invalid_reason(self._pending_action.environment)
+            if reason is not None:
+                self.pending_decision = None
+                self.metrics.cancellations += 1
+                return FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=reason, target=self.state.latest_target())
+        current_target = self.state.latest_target()
+        message = f'Updated gaze context with "{current_target.label}".' if current_target else "No fresh grounded target was recorded."
         return FusionFeedbackEvent(
             phase=FusionLoopPhase.TRACKING,
             message=message,
-            target=target,
+            target=current_target,
         )
 
     def run_voice_turn(
@@ -106,6 +167,14 @@ class MultimodalFusionLoop:
         ]
         self.state.record_transcript(text, confidence=transcript_confidence)
         directive = self.voice_interpreter.interpret(text)
+        invalid_pending = self._pending_invalid_reason(environment)
+        if invalid_pending is not None:
+            self.pending_decision = None
+            self.metrics.cancellations += 1
+            events.append(FusionFeedbackEvent(
+                phase=FusionLoopPhase.RECOVERING, transcript=text,
+                message=invalid_pending, target=latest_target,
+            ))
 
         if directive.kind not in {VoiceDirectiveType.CONFIRM, VoiceDirectiveType.CANCEL}:
             self.pending_decision = None
@@ -127,7 +196,8 @@ class MultimodalFusionLoop:
         if directive.kind == VoiceDirectiveType.CONFIRM:
             if self.pending_decision is None:
                 self.metrics.recoveries += 1
-                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="There is no pending fused action to confirm.", transcript=text))
+                if invalid_pending is None:
+                    events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message="There is no pending fused action to confirm.", transcript=text))
             else:
                 allow_decision = self.broker.confirm(self.pending_decision)
                 self.pending_decision = None
@@ -165,7 +235,7 @@ class MultimodalFusionLoop:
             if decision.decision == BrokerDecisionType.ALLOW:
                 events.extend(self._execute_allow_decision(decision, environment))
             elif decision.decision == BrokerDecisionType.CONFIRM:
-                self.pending_decision = decision
+                self._set_pending(decision, environment)
                 self.metrics.confirmations += 1
                 events.append(
                     FusionFeedbackEvent(
@@ -210,7 +280,7 @@ class MultimodalFusionLoop:
             if decision.decision == BrokerDecisionType.ALLOW:
                 events.extend(self._execute_allow_decision(decision, environment))
             elif decision.decision == BrokerDecisionType.CONFIRM:
-                self.pending_decision = decision
+                self._set_pending(decision, environment)
                 self.metrics.confirmations += 1
                 events.append(FusionFeedbackEvent(phase=FusionLoopPhase.CONFIRMING, message=decision.confirmation_prompt or "Confirm this action?", transcript=text, decision=decision))
             else:

@@ -126,6 +126,16 @@ The initial typed schemas now live in `interaction.contracts`. They are intentio
 - Cancellation remains available regardless of recognition confidence.
 - A new non-confirmation command replaces the old pending action, including when the new command needs clarification.
 
+## Live Context and Pending Actions
+
+- Gaze observation age is measured with a monotonic clock. Supplying a worker timestamp preserves the original age; a delayed observation must not become fresh merely because it arrived later.
+- Live fusion binds commands to recent stable gaze at command finalization. This does not imply speech-onset alignment.
+- A pending confirmation expires after 15 seconds by default and is bound to the original application/window snapshot.
+- Pointer confirmations additionally require fresh gaze, the same target revision, and proximity to the proposed point (default maximum normalized Euclidean distance: 0.08).
+- Tracking loss or an intervening target change cancels the pointer action, even if gaze returns to the old region before the next speech result.
+- Unknown context is represented explicitly. Live execution stops when the foreground app cannot be identified; scripted dry-run callers can still supply an unknown snapshot.
+- Exact editable-field identity and semantic target bounds remain future Accessibility integration work.
+
 ## Remaining Decisions
 
 - Canonical grounded-target schema

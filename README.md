@@ -26,7 +26,7 @@ The current implementation is still intentionally limited:
 - a real macOS microphone-to-transcript path now exists through a native helper exposed as `interaction voice-live`
 - a real webcam calibration and live gaze path now exists through `interaction gaze-calibrate` and `interaction gaze-live`
 - `gaze-live` now supports continuous `cursor` follow plus explicit dwell-triggered `highlight`, `move`, `click`, `right-click`, `double-click`, and two-stage `drag` modes for self-testing gaze-only manipulation
-- a real sequential live multimodal path now exists through `interaction fusion-live`, including gaze-grounded `focus this`, `click this`, `right click this`, and `open this`
+- `interaction fusion-live` keeps webcam gaze capture active during speech and confirmation, including gaze-grounded `focus this`, `click this`, `right click this`, and `open this`
 - a gaze loop now exists with calibration fitting, smoothing, large-target inference, conservative dwell-triggered highlighting, and dry-run broker execution
 - an OpenCV webcam provider path now exists for coarse large-target grounding
 - a multimodal fusion loop now exists with recent-gaze grounding, confidence-based clarification, confirmation handling, and repeatable dry-run metrics
@@ -34,7 +34,7 @@ The current implementation is still intentionally limited:
 - live webcam use depends on macOS camera permission and remains heuristic rather than precision-grade
 - live webcam gaze now expects a saved `webcam-live` calibration profile before the first real run
 - the current fusion strategy only reasons over recent grounded targets, not a richer desktop-semantic target graph
-- the current live multimodal path is sequential gaze-then-voice, not a continuous concurrent session manager
+- live fusion runs one command and any required confirmation while a single camera worker maintains fresh gaze context
 - the overlay is terminal-rendered for now, not a native always-on-top macOS overlay
 
 Manual Phase 1 smoke harness:
@@ -166,6 +166,14 @@ Say `stop listening` or press Ctrl-C to finish. Required confirmations are captu
 Commands accept ordinary sentence punctuation and polite prefixes. `click`, `right click`, and `double click` refer to gaze targets in fusion; voice-only use asks for a target. Dictated punctuation and spacing are preserved. Explicitly low-confidence recognition asks for a repeat instead of executing.
 
 The microphone provider still records bounded audio windows; continuous sessions currently repeat those captures. Streaming recognition and a native desktop shell are separate work.
+
+### Live context and cancellation
+
+Voice and fusion sessions inspect the foreground application and window before and after each speech capture. If that context changes, repeat the command in the intended location. Live execution requires an identified foreground application; the probe may need macOS Automation/Accessibility access.
+
+`fusion-live` keeps a single camera worker running during speech. It selects the recent stable gaze target when the command finishes. Confirmations expire after 15 seconds and cancel on a changed application/window, lost or stale gaze, a different target, or excessive movement from the pending point. Returning to the old target does not revive a cancelled action. `--gaze-delta-ms` controls the sampling delay; timestamps and freshness use actual elapsed time.
+
+These checks identify an application/window and coarse screen region. Exact controls and editable fields still require Accessibility target integration.
 
 - **Voice for intent**: "open that", "translate this", "scroll slower", "reply in Chinese"
 - **Gaze for targeting**: "that" is grounded by what the user is looking at

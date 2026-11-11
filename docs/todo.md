@@ -68,7 +68,7 @@
 ## Phase 9 — Reliable Live Interaction
 - [ ] [12-reliable-live-interaction](plans/12-reliable-live-interaction.md) — five sequential implementation and push sections before hardware evaluation
   - [x] [12-1-voice-session](plans/12-1-voice-session.md) — commands, feedback, and live follow-ups
-  - [ ] 12-2: Timing, pending actions, and live context (not yet planned)
+  - [x] [12-2-live-context](plans/12-2-live-context.md) — timing, pending actions, and live context
   - [ ] 12-3: Calibration validity and visible targets (not yet planned)
   - [ ] 12-4: Tracking loss and deliberate dwell (not yet planned)
   - [ ] 12-5: Dependencies, packaging, and CI (not yet planned)

@@ -121,6 +121,10 @@ src/interaction/
 - `scripts/phase3_gaze_smoke.py` is the safe manual smoke harness for the gaze loop.
 - `scripts/phase3_webcam_smoke.py` is the live webcam smoke harness for the OpenCV provider patch.
 - `src/interaction/runtime/state.py` now holds the shared multimodal interaction state for recent transcripts, gaze context, candidate targets, and freshness windows.
+- `src/interaction/runtime/clock.py` supplies the injected monotonic clock; worker observations retain their original timestamps. Explicit `advance()` remains a scripted simulation facility.
+- `src/interaction/runtime/pending.py` binds confirmation to the proposal's creation time, environment, target revision, and gaze point. Tracking loss cancels pending pointer actions.
+- `src/interaction/runtime/live_gaze.py` owns camera open/read/close on one background worker while the main thread captures speech and interprets commands. Stable snapshots carry freshness and loss/target-change revisions.
+- `src/interaction/platform/environment.py` performs a bounded, read-only macOS foreground app/window probe; unavailable values remain unknown. Live execution requires identified app context.
 - `src/interaction/intent/fusion.py` resolves deictic utterances such as `"open this"` and `"click that"` against recent grounded gaze targets.
 - `src/interaction/feedback/fusion.py` provides event-level fusion feedback states.
 - `src/interaction/runtime/fusion.py` coordinates shared-state fusion, confidence aggregation, clarification, confirmation, and dry-run execution metrics.

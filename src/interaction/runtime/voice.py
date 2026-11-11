@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from interaction.audio import PushToTalkTurnManager, ScriptedTranscriber
-from interaction.contracts import ActionName, BrokerDecisionType, EnvironmentSnapshot, TranscriptSegment
+from interaction.contracts import ActionName, BrokerDecision, BrokerDecisionType, EnvironmentSnapshot, TranscriptSegment
 from interaction.control import CommandBroker
 from interaction.feedback import VoiceFeedbackEvent, VoiceLoopPhase
 from interaction.intent import VoiceDirectiveType, VoiceIntentInterpreter
 from interaction.platform import MacOSPlatformAdapter, PlatformAdapter
+
+from .clock import Clock, monotonic_ms
+from .pending import PendingAction
 
 
 class VoiceCommandLoop:
@@ -21,14 +24,44 @@ class VoiceCommandLoop:
         interpreter: VoiceIntentInterpreter | None = None,
         transcriber: ScriptedTranscriber | None = None,
         min_recognition_confidence: float = 0.6,
+        clock: Clock = monotonic_ms,
+        pending_timeout_ms: int = 15_000,
     ) -> None:
         self.broker = broker or CommandBroker()
         self.adapter = adapter or MacOSPlatformAdapter(dry_run=True)
         self.interpreter = interpreter or VoiceIntentInterpreter()
         self.transcriber = transcriber or ScriptedTranscriber()
         self.min_recognition_confidence = min_recognition_confidence
+        self.clock = clock
+        self.pending_timeout_ms = max(1, pending_timeout_ms)
         self.turn_manager = PushToTalkTurnManager()
         self.pending_decision = None
+
+    @property
+    def pending_decision(self) -> BrokerDecision | None:
+        return self._pending_decision
+
+    @pending_decision.setter
+    def pending_decision(self, decision: BrokerDecision | None) -> None:
+        self._pending_decision = decision
+        self._pending_action: PendingAction | None = None
+
+    def _set_pending(self, decision: BrokerDecision, environment: EnvironmentSnapshot) -> None:
+        self.pending_decision = decision
+        self._pending_action = PendingAction(
+            decision=decision,
+            environment=environment.model_copy(deep=True),
+            created_at_ms=self.clock(),
+        )
+
+    def _pending_invalid_reason(self, environment: EnvironmentSnapshot) -> str | None:
+        if self.pending_decision is None:
+            return None
+        if self._pending_action is None:
+            return "The pending action has no captured context. Please repeat the command."
+        return self._pending_action.invalid_reason(
+            now_ms=self.clock(), timeout_ms=self.pending_timeout_ms, environment=environment,
+        )
 
     def run_text_turn(
         self,
@@ -79,6 +112,12 @@ class VoiceCommandLoop:
             )
         )
         directive = self.interpreter.interpret(segment.text)
+        invalid_pending = self._pending_invalid_reason(environment)
+        if invalid_pending is not None:
+            self.pending_decision = None
+            events.append(VoiceFeedbackEvent(
+                phase=VoiceLoopPhase.RECOVERING, transcript=segment.text, message=invalid_pending,
+            ))
 
         if directive.kind not in {VoiceDirectiveType.CONFIRM, VoiceDirectiveType.CANCEL}:
             # A new request supersedes the previous one, even if it needs
@@ -100,7 +139,8 @@ class VoiceCommandLoop:
 
         if directive.kind == VoiceDirectiveType.CONFIRM:
             if self.pending_decision is None:
-                events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, transcript=segment.text, message="There is no pending action to confirm."))
+                if invalid_pending is None:
+                    events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, transcript=segment.text, message="There is no pending action to confirm."))
             else:
                 allow_decision = self.broker.confirm(self.pending_decision)
                 self.pending_decision = None
@@ -147,7 +187,7 @@ class VoiceCommandLoop:
         if decision.decision == BrokerDecisionType.ALLOW:
             events.extend(self._execute_allow_decision(decision, environment))
         elif decision.decision == BrokerDecisionType.CONFIRM:
-            self.pending_decision = decision
+            self._set_pending(decision, environment)
             events.append(
                 VoiceFeedbackEvent(
                     phase=VoiceLoopPhase.CONFIRMING,

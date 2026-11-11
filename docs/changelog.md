@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-11 — Section 2
+- [fix] Bound pending actions to real elapsed time, foreground application/window context, fresh gaze, target revision, and point drift; tracking loss or expiry cancels stale confirmations.
+- [feat] Kept one camera-owning worker running through live speech and confirmation with structured lifecycle errors and stable timestamped snapshots.
+- [test] Added deterministic clock/context regressions, a bounded macOS probe test suite, and worker lifecycle/freshness/loss checks.
+
 ## 2026-11-11
 - [fix] Section 1: normalized spoken command syntax, preserved dictated content, added bare gaze activation, and gated low-confidence commands/confirmations.
 - [feat] Section 1: added continuous/bounded multi-command voice sessions with same-session confirmation and immediate stderr/JSONL feedback.

@@ -2,13 +2,14 @@
 
 ## Open Bugs
 
-- Real elapsed time and application context are not yet used consistently for gaze freshness and pending-action expiry (Phase 9 section 2).
 - Calibration accepts uninformative or insufficient measurements and lacks visible reference targets and independent validation (Phase 9 section 3).
 - Tracking loss can retain partial dwell/armed drag state; gaze lock can be reported after one valid frame (Phase 9 section 4).
 - OpenCV 5 removes APIs used by this provider; dependency compatibility and native helper packaging need explicit gates (Phase 9 section 5).
 
 ## Resolved in Phase 9
 
+- Section 2: live gaze remains active during speech; freshness and pending-action expiry use a monotonic clock, and confirmations are bound to app/window/target context.
+- Section 2: a single camera worker owns open/read/close, invalidates locks on loss, and reports structured startup/read/shutdown failures.
 - Section 1: live voice confirmation can now complete in the same process; successive commands can share one session.
 - Section 1: listening and confirmation messages are delivered before blocking capture, with immediate JSONL logging.
 - Section 1: punctuation, polite prefixes, bare gaze commands, low-confidence confirmations, and superseded pending commands are covered by regression tests.
@@ -29,7 +30,8 @@
 - **Gaze-control limitation:** `gaze-live` now has continuous `cursor` follow plus explicit dwell-triggered move/click/right-click/double-click/drag modes, but they are still coarse tester modes and can misfire on small targets or unstable lighting.
 - **Cursor-follow limitation:** the new `cursor` mode uses smoothing, deadzone, edge padding, and max-step heuristics rather than true calibrated eye-tracker dynamics, so some per-machine tuning may still be needed.
 - **Fusion-grounding limitation:** the multimodal fusion loop currently grounds deictic voice commands against the latest fresh gaze target window rather than a richer desktop-semantic target set.
-- **Live-fusion orchestration limitation:** the current `fusion-live` path captures gaze context first and speech second; it is a real MVP demo path, but not yet a continuous concurrent multimodal session loop.
+- **Live-fusion orchestration limitation:** `fusion-live` maintains concurrent camera capture through one command and confirmation, but speech still uses fixed windows and gaze binding happens at command finalization.
+- **Focus-identity limitation:** foreground app/window checks do not identify exact editable fields or detect a transient focus change that returns before the next probe. Accessibility target identity remains needed.
 - **Fusion-threshold limitation:** fused confidence uses fixed heuristic weights and a static clarification threshold; those values have not been tuned against real user-session data yet.
 - **Overlay limitation:** the current productization layer exposes a terminal-rendered overlay snapshot rather than a native always-on-top macOS overlay.
 - **Packaging limitation:** the repo now has a local CLI entry point and a smoke wrapper, but it is not packaged as a macOS app bundle or installer.

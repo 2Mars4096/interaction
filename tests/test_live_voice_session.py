@@ -5,6 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from interaction.app import main
 from interaction.audio import LiveSpeechCapture, SpeechCaptureError
 from interaction.session import SessionReplay
+from interaction.contracts import EnvironmentSnapshot
 
 
 def run_session(monkeypatch, tmp_path, utterances, *options):
@@ -99,3 +100,25 @@ def test_keyboard_interrupt_ends_session_with_json(monkeypatch, tmp_path):
     with redirect_stdout(output), redirect_stderr(io.StringIO()):
         main(["voice-live", "--continuous", "--runtime-dir", str(tmp_path)])
     assert json.loads(output.getvalue())["session"]["stopped"]
+
+
+def test_application_change_during_speech_cancels_execution(monkeypatch, tmp_path):
+    contexts = iter([EnvironmentSnapshot(active_app="Notes"), EnvironmentSnapshot(active_app="Terminal")])
+    monkeypatch.setattr("interaction.app.capture_environment", lambda: next(contexts))
+    payload, _, _ = run_session(monkeypatch, tmp_path, ["type example"])
+    assert payload["live_capture"]["error"] == "context_changed"
+    assert not any(event["result"] for event in payload["events"])
+
+
+def test_continuous_session_recovers_from_changed_context(monkeypatch, tmp_path):
+    notes = EnvironmentSnapshot(active_app="Notes")
+    terminal = EnvironmentSnapshot(active_app="Terminal")
+    contexts = iter([notes, terminal, notes, notes, notes, notes])
+    monkeypatch.setattr("interaction.app.capture_environment", lambda: next(contexts))
+    payload, _, _ = run_session(monkeypatch, tmp_path, ["scroll down", "scroll up", "stop listening"], "--continuous")
+    assert payload["captures"][0]["error"] == "context_changed"
+    results = [event["result"] for event in payload["events"] if event["result"]]
+    assert len(results) == 1
+    assert results[0]["proposal"]["arguments"]["direction"] == "up"
+    assert payload["session"]["stopped"]
+    assert not payload["session"]["failed"]
