@@ -183,6 +183,12 @@ Say `stop listening` or press Ctrl-C to finish; `cancel` abandons only the pendi
 
 Each command and follow-up uses current gaze and foreground context. Loss of tracking after startup allows voice-only commands and session stop, while pointer commands must regain a valid target. Final JSON includes command/confirmation captures and `session` counts, with the existing last-capture fields retained. `session.commands` counts successful primary captures, including a spoken stop; fusion's separate `metrics.executions` counts executed action results.
 
+### Session history and replay
+
+Live voice, fusion, gaze, and calibration sessions retain the latest 200 events by default. Voice and fusion also retain the latest 200 captures of each kind. Use `--history-limit N` to change the positive retention limit. Final JSON's `history` reports total, retained, and dropped counts; session and execution counts still cover the whole session. This limit changes retained output, not active pending actions or gaze freshness.
+
+The JSONL event journal remains complete and is written as events occur. Use `interaction replay --session-log <path>` to inspect the complete event history; explicit replay loads that journal in full. Capture arrays in the final JSON are recent summaries, while the journal contains the full sequence of feedback, transcripts, decisions, and results.
+
 ### Live context and cancellation
 
 Voice and fusion sessions inspect the foreground application and window before and after each speech capture. If that context changes, repeat the command in the intended location. Live execution requires an identified foreground application; the probe may need macOS Automation/Accessibility access.

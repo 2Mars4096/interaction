@@ -6,6 +6,7 @@
 
 ## Resolved in Phase 10
 
+- Section 2: live events, snapshots, and speech capture summaries no longer grow for the full lifetime of continuous sessions; configurable retention and explicit truncation counts preserve complete event replay.
 - Section 1: live fusion no longer ends after one command when `--turns` or `--continuous` is requested; confirmation silence has a bounded retry budget, and camera ownership spans the full session.
 - Section 1: successful reacquisition removes stale tracking-loss error fields from the final gaze status.
 - Section 1: spoken session stop is handled independently of foreground/target action authorization, so focus changes cannot discard a stop request.

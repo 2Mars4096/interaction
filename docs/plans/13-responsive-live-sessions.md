@@ -11,7 +11,7 @@
 
 ## Sections
 - [x] [13-1-continuous-fusion](13-1-continuous-fusion.md): repeated commands and same-session recovery while one camera worker remains active.
-- [ ] [13-2-bounded-session-history](13-2-bounded-session-history.md): bounded memory and final payloads with complete incremental event logs.
+- [x] [13-2-bounded-session-history](13-2-bounded-session-history.md): bounded memory and final payloads with complete incremental event logs.
 - [ ] [13-3-streaming-speech](13-3-streaming-speech.md): live audio recognition, immediate transcript previews, bounded endpointing, and final-only execution.
 
 ## Plan review

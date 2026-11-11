@@ -143,6 +143,7 @@ src/interaction/
 - `src/interaction/ui/overlay.py` now provides the structured overlay-state model plus a terminal renderer for runtime visibility.
 - `src/interaction/session/logging.py` now provides structured JSONL session logging and replay helpers.
 - `src/interaction/session/live.py` publishes live CLI feedback to stderr, journals events immediately, and updates overlay state without duplicating records when the final JSON payload is built.
+- Its `BoundedHistory` retains the most recent entries with exact lifetime counts. Live events, serialized output, overlay snapshots, and speech capture summaries use bounded retention; JSONL feedback journals are complete. `--history-limit` configures live voice/fusion/gaze/calibration retention, and final `history` metadata makes omissions explicit.
 - `voice-live` can retain one command loop for bounded multiple commands or `--continuous` sessions, including required confirmation turns. Native speech capture is still windowed, not streaming.
 - `fusion-live` uses the same session options while retaining one camera worker for its entire lifetime. Startup requires calibration and an initial gaze lock; each later turn refreshes gaze and foreground context. Retryable silence/context changes do not restart the camera, and shutdown clears pending actions before joining the worker.
 - `src/interaction/persistence/store.py` now provides workspace-local runtime paths, persisted settings, and calibration-profile storage.

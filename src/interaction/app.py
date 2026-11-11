@@ -34,7 +34,7 @@ from interaction.runtime import (
     run_live_webcam_trace,
 )
 from interaction.session import SessionLogger, SessionReplay, serialize_feedback_event
-from interaction.session.live import LiveEventBuffer
+from interaction.session.live import BoundedHistory, DEFAULT_HISTORY_LIMIT, LiveEventBuffer
 from interaction.intent.voice import normalize_command
 from interaction.ui import ConsoleOverlayRenderer, LiveGazeDotOverlay, OverlayController
 from interaction.ui.calibration import CalibrationTargetOverlay, CalibrationUIError
@@ -153,6 +153,10 @@ def _build_parser() -> argparse.ArgumentParser:
     fusion_live.add_argument("--continuous", action="store_true", help="Listen for successive commands until 'stop listening' or Ctrl-C.")
     fusion_live.add_argument("--confirmation-attempts", type=_positive_int, default=2)
 
+    for live_parser in (voice_live, fusion_live, gaze_live, gaze_calibrate):
+        live_parser.add_argument("--history-limit", type=_positive_int, default=DEFAULT_HISTORY_LIMIT,
+                                 help="Maximum entries retained per live history; the event journal remains complete.")
+
     replay = subparsers.add_parser("replay")
     replay.add_argument("--session-log", required=True)
     replay.add_argument("--runtime-dir", default=".interaction")
@@ -198,9 +202,9 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
-    events = LiveEventBuffer("voice", logger, overlay)
-    captures: list[dict[str, Any]] = []
-    confirmation_captures: list[dict[str, Any]] = []
+    events = LiveEventBuffer("voice", logger, overlay, history_limit=args.history_limit)
+    captures: BoundedHistory[dict[str, Any]] = BoundedHistory(args.history_limit)
+    confirmation_captures: BoundedHistory[dict[str, Any]] = BoundedHistory(args.history_limit)
     stopped = False
     failed = False
     commands = 0
@@ -278,11 +282,12 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         extra={
             "settings": _settings_payload(settings, effective_dry_run),
             "live_capture": captures[-1] if captures else None,
-            "captures": captures,
-            "confirmation_captures": confirmation_captures,
+            "captures": list(captures),
+            "confirmation_captures": list(confirmation_captures),
             "session": {"commands": commands, "stopped": stopped, "failed": failed},
             "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
         },
+        histories={"captures": captures, "confirmation_captures": confirmation_captures},
     )
 
 
@@ -296,7 +301,7 @@ def _run_gaze_calibrate(args: argparse.Namespace, store: JsonStateStore) -> dict
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
-    events = LiveEventBuffer("gaze", logger, overlay)
+    events = LiveEventBuffer("gaze", logger, overlay, history_limit=args.history_limit)
     provider = None
     target_screen = None
     profile = None
@@ -453,17 +458,18 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
     visualization = _gaze_visualization_payload(args)
+    live_events = LiveEventBuffer("gaze", logger, overlay, history_limit=args.history_limit)
     if profile is None:
-        events = [
+        live_events.extend([
             GazeFeedbackEvent(
                 phase=GazeLoopPhase.RECOVERING,
                 message="No current validated calibration profile is available for this camera. Run `interaction gaze-calibrate` first.",
             ),
             GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."),
-        ]
+        ])
         return _build_payload(
             source="gaze",
-            events=events,
+            events=live_events,
             logger=logger,
             overlay=overlay,
             renderer=renderer,
@@ -501,7 +507,6 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
         drag_timeout_ms=max(0, args.drag_timeout_ms),
     )
     loop.calibration_profile = profile
-    live_events = LiveEventBuffer("gaze", logger, overlay)
     live_events.append(GazeFeedbackEvent(phase=GazeLoopPhase.TRACKING, message="Starting live gaze. Tracking loss pauses control."))
     environment = capture_environment()
     try:
@@ -625,10 +630,10 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
     logger = SessionLogger(store.paths.next_session_log_path(args.session_name))
     overlay = OverlayController()
     renderer = ConsoleOverlayRenderer()
-    events = LiveEventBuffer("fusion", logger, overlay)
+    events = LiveEventBuffer("fusion", logger, overlay, history_limit=args.history_limit)
     live_gaze_context: dict[str, Any] = {}
-    captures: list[dict[str, Any]] = []
-    confirmation_captures: list[dict[str, Any]] = []
+    captures: BoundedHistory[dict[str, Any]] = BoundedHistory(args.history_limit)
+    confirmation_captures: BoundedHistory[dict[str, Any]] = BoundedHistory(args.history_limit)
     sampler = None
     gaze_revision = None
     stopped = False
@@ -756,12 +761,13 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             "settings": _settings_payload(settings, effective_dry_run), "camera_index": camera_index,
             "live_gaze_context": live_gaze_context, "live_capture": captures[-1] if captures else None,
             "confirmation_capture": confirmation_captures[-1] if confirmation_captures else None,
-            "captures": captures, "confirmation_captures": confirmation_captures,
+            "captures": list(captures), "confirmation_captures": list(confirmation_captures),
             "session": {"commands": commands, "stopped": stopped, "failed": failed},
             "metrics": loop.metrics.to_dict(),
             "platform_capabilities": loop.adapter.describe_capabilities().__dict__,
             "calibration_profile": _profile_to_payload(profile) if profile else None,
         },
+        histories={"captures": captures, "confirmation_captures": confirmation_captures},
     )
 
 
@@ -788,15 +794,16 @@ def _run_replay(args: argparse.Namespace) -> dict[str, Any]:
 def _build_payload(
     *,
     source: str,
-    events: list[object],
+    events: list[object] | LiveEventBuffer,
     logger: SessionLogger,
     overlay: OverlayController,
     renderer: ConsoleOverlayRenderer,
     extra: dict[str, Any],
+    histories: dict[str, BoundedHistory] | None = None,
 ) -> dict[str, Any]:
     if isinstance(events, LiveEventBuffer):
-        snapshots = events.snapshots
-        serialized_events = events.serialized_events
+        snapshots = list(events.snapshots)
+        serialized_events = list(events.serialized_events)
     else:
         snapshots = []
         serialized_events = []
@@ -814,6 +821,13 @@ def _build_payload(
         "final_overlay_rendered": renderer.render(final_overlay),
     }
     payload.update(extra)
+    if isinstance(events, LiveEventBuffer):
+        payload["history"] = {
+            "limit": events.limit,
+            "events": events.summary(),
+            "overlay_snapshots": events.snapshots.summary(),
+            **{name: history.summary() for name, history in (histories or {}).items()},
+        }
     return payload
 
 

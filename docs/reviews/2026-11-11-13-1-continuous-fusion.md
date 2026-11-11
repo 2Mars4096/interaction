@@ -16,6 +16,7 @@
 - Focused live voice/fusion session suite: **54 passed**, including actual background camera-worker coordination with fake hardware input.
 - Checks cover repeated commands, continued sampling, confirmation silence/low confidence, cancellation and replacement, focus changes, lost/reacquired gaze, unknown context, spoken stop, Ctrl-C, fatal errors, one-time cleanup, and replay without duplicate events.
 - Critical Ruff checks and `git diff --check` passed.
+- [CI run 42991293636](https://github.com/2Mars4096/interaction/actions/runs/42991293636) passed for commit `bd56d23`, including Linux/macOS tests and packaged native helper compilation.
 
 ## Remaining work
 - Section 13-2 bounds retained live history; the preexisting continuous voice buffer is currently unbounded.
