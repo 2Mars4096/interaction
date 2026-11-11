@@ -1,7 +1,7 @@
 # Section 5: Build and CI Review
 
 **Source gate:** passed after fixes
-**Platform gate:** pending first published CI run
+**Platform gate:** Linux passed; macOS pending the runner correction
 **Plan:** [12-5-build-and-ci](../plans/12-5-build-and-ci.md)
 
 ## Findings and fixes
@@ -10,6 +10,7 @@
 - Two processes could race while publishing the first helper cache entry. A losing publisher now reuses the exact verified winning binary/manifest pair.
 - JSON overflow numbers such as `1e309` could retain non-finite values in error metadata. Parsing rejects them before they enter the result payload.
 - Distribution checks require the Objective-C source, permission plist, dependency constraints, and hashed baseline in the appropriate archives. The wheel is built from the sdist.
+- The first published workflow used the retired `macos-14` image and its Mac jobs were cancelled before setup. The matrix now uses `macos-15`, following the [official retirement announcement](https://github.com/actions/runner-images/issues/13518).
 
 ## Evidence
 
@@ -18,11 +19,12 @@
 - Critical Ruff checks, `pip check`, and `git diff --check` passed.
 - `python -m build --no-isolation` produced the sdist and its wheel with locked build tools; archive resource/baseline checks passed.
 - The wheel passed an isolated install outside the checkout on Linux/Python 3.12.14: CLI entry point, installed import origins, exact native resources, and all required OpenCV 4.12 Haar classifiers.
+- [First CI run](https://github.com/2Mars4096/interaction/actions/runs/42963333479): all three Linux Python-version test jobs and the Linux distribution job passed. The four Mac jobs were cancelled before setup on the retired runner, prompting the matrix correction above.
 - Reviewed finite build/capture deadlines, source/platform cache identity, manifest verification, rollback, interruption cleanup, literal transcript preservation, and strict native payload metadata.
 - CI defines six Linux/macOS test jobs across Python 3.11–3.13 and two distribution jobs. The macOS distribution job compiles the installed helper and verifies cache reuse without running capture.
 
 ## Limits
 
-- Remote macOS compilation results must be checked after publishing the workflow. No native compilation is claimed by the Linux source gate.
+- Remote macOS compilation results must be checked after publishing the runner correction. No native compilation is claimed by the Linux source gate.
 - Automated verification does not exercise microphone/camera permissions, speech quality or latency, desktop actions, webcam accuracy, or user performance.
 - The speech provider still records bounded turns. Streaming recognition, semantic Accessibility targets, and a native app bundle remain separate work.

@@ -45,4 +45,5 @@
 
 ## Failed Approaches
 
+- The first Phase 9 workflow used `macos-14`, which GitHub Actions retired on November 2, 2026. Those jobs were cancelled before setup; the workflow now uses the supported `macos-15` label. Check the [runner retirement announcements](https://github.com/actions/runner-images/issues/13518) when changing CI images.
 - A direct Swift bridge to `Speech.framework` was rejected in this environment because the local Swift compiler and installed SDK do not match closely enough to build Foundation-backed framework imports reliably; the Phase 6 live speech path uses Objective-C plus `clang` instead.

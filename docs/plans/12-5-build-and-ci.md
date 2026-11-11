@@ -30,4 +30,4 @@
 - Built the wheel from the sdist with the locked build tools; both archives passed resource/baseline verification.
 - Installed the wheel into a separate virtual environment outside the checkout; CLI, imports, packaged resources, and Haar classifiers passed on Linux/Python 3.12.
 - Independent source gate: [Section 5 review](../reviews/2026-11-11-section-5-build-and-ci.md).
-- Remote macOS compilation is pending the first CI run; local checks do not claim native execution or hardware accuracy.
+- The first published CI run passed all four Linux jobs. GitHub cancelled the retired macOS 14 jobs before setup; the macOS 15 correction must pass before the platform gate closes. Local checks do not claim native execution or hardware accuracy.
