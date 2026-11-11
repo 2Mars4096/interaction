@@ -113,11 +113,31 @@ def probe_installation(checkout: Path, expected_resources: dict[str, str], *, co
         original_mtime = native_binary.stat().st_mtime_ns
         if provider.ensure_helper() != native_binary or native_binary.stat().st_mtime_ns != original_mtime:
             raise ValueError("The second helper build did not reuse its valid cached binary.")
+        # Invalid arguments must fail before permission APIs or audio startup.
+        # This exercises the installed binary's versioned stream envelope while
+        # keeping CI independent of microphone/speech authorization.
+        for option, value in (("--duration", "0"), ("--duration", "31"),
+                              ("--silence-duration", "0.1"), ("--silence-duration", "nan")):
+            result = subprocess.run(
+                [str(native_binary), "--stream", "--locale", "fr-FR", option, value],
+                check=False, capture_output=True, text=True, timeout=5,
+            )
+            lines = result.stdout.splitlines()
+            if result.returncode != 2 or len(lines) != 1:
+                raise ValueError("The installed native stream probe did not reject invalid arguments before capture.")
+            event = json.loads(lines[0])
+            expected = {"schema_version": 1, "sequence": 1, "provider": "macos_speech", "locale": "fr-FR",
+                        "event": "error", "error": "invalid_capture_arguments"}
+            if not isinstance(event, dict) or any(event.get(key) != value for key, value in expected.items()):
+                raise ValueError("The installed native helper returned an invalid stream error envelope.")
+            if not isinstance(event.get("message"), str) or not event["message"].strip():
+                raise ValueError("The installed native helper returned an empty stream error message.")
 
     return {
         "python": sys.version.split()[0], "package_path": str(Path(interaction.__file__).resolve()),
         "entrypoint": str(entrypoint), "opencv": cv2.__version__, "haar_cascades": list(cascades),
         "resources": expected_resources, "native_compile": "passed" if native_binary is not None else "not_requested",
+        "native_stream_arguments": "passed" if native_binary is not None else "not_requested",
     }
 
 

@@ -18,13 +18,15 @@ This repository now contains a working prototype stack through multimodal fusion
 
 The Phase 9 reliability pass adds repeated live voice sessions, fresh concurrent gaze, validated calibration, tracking-loss recovery, and reproducible packages. Its 476-test suite and eight Linux/macOS CI jobs passed, including native speech-helper compilation from the installed wheel. Hardware accuracy and live interaction evaluation remain open; see the [completion plan](docs/plans/12-reliable-live-interaction.md).
 
+Phase 10 adds continuous fusion sessions, bounded retained history with complete event journals, and opt-in streaming speech with real previews and silence endpointing. See the [responsive sessions plan](docs/plans/13-responsive-live-sessions.md) for section-level verification and remaining hardware checks.
+
 The current implementation is still intentionally limited:
 
 - broker policy and execution-request preparation are implemented
 - the macOS adapter supports a small bounded action set with dry-run as the default safety mode
 - live pointer actions can now use explicit screen coordinates or normalized gaze-grounded points, and still require macOS accessibility permissions
 - highlight behavior is still a placeholder notification, not a real overlay
-- the voice loop supports bounded command parsing, confirmation/cancellation handling, and dry-run broker execution; live sessions repeat final-transcript captures
+- the voice loop supports bounded command parsing, confirmation/cancellation handling, and dry-run broker execution; live sessions support recorded or opt-in streaming capture
 - a real macOS microphone-to-transcript path now exists through a native helper exposed as `interaction voice-live`
 - a real webcam calibration and live gaze path now exists through `interaction gaze-calibrate` and `interaction gaze-live`
 - `gaze-live` now supports continuous `cursor` follow plus explicit dwell-triggered `highlight`, `move`, `click`, `right-click`, `double-click`, and two-stage `drag` modes for self-testing gaze-only manipulation
@@ -167,7 +169,22 @@ Say `stop listening` or press Ctrl-C to finish. Required confirmations are captu
 
 Commands accept ordinary sentence punctuation and polite prefixes. `click`, `right click`, and `double click` refer to gaze targets in fusion; voice-only use asks for a target. Dictated punctuation and spacing are preserved. Explicitly low-confidence recognition asks for a repeat instead of executing.
 
-The microphone provider still records bounded audio windows; continuous sessions currently repeat those captures. Streaming recognition is the next planned section; a native desktop shell remains separate work.
+Recorded capture remains the default. Continuous sessions repeat the selected capture mode; a native desktop shell remains separate work.
+
+### Streaming speech previews and turn completion
+
+Enable the streaming path to see real transcript updates while speaking:
+
+```bash
+interaction voice-live --continuous --speech-mode stream --duration 8 --silence-duration 0.8
+interaction fusion-live --continuous --speech-mode stream --duration 8 --silence-duration 0.8
+```
+
+Wait for `Microphone ready`, then speak. `Hearing:` lines are revisable previews. Only a valid final result from a successfully exited helper reaches the command loop. The same mode is used for confirmations, and `stop listening` or Ctrl-C ends the session. The commands above keep the existing dry-run behavior; add `--execute` when testing actual desktop actions.
+
+In streaming mode, `--duration` is a maximum, not a mandatory recording window. Capture can end after the configured silence interval (0.2–5 seconds, default 0.8) or an actual recognizer final. If the ceiling cuts off active speech, the command is discarded and continuous mode asks for a repeat; increasing the maximum does not impose that whole wait on short commands. Recognition finalization has a separate eight-second limit. A partial, timeout, malformed event, or failed helper exit cannot authorize an action.
+
+Capture metadata reports the measured duration, configured maximum, and endpoint reason. Silence uses an initial audio-energy heuristic; microphone sensitivity, noise, recognition quality, and end-to-end latency still require testing on your Mac. Streaming is opt-in for that comparison. Use `--speech-mode recorded` for the existing fixed-window path. Each turn owns its microphone capture; this is not a wake-word or always-open audio service.
 
 ### Repeated voice-and-gaze commands
 
@@ -226,6 +243,7 @@ Only a successful validation replaces the saved profile. Failed or cancelled att
 - [docs/command-vocabulary.md](docs/command-vocabulary.md) - first bounded command set and default broker decisions
 - [docs/evaluation-plan.md](docs/evaluation-plan.md) - success metrics for latency, accuracy, accidental actions, and usability
 - [docs/mvp-readiness.md](docs/mvp-readiness.md) - tester-facing acceptance targets, setup checklist, and first-trial commands
+- [docs/speech-stream-protocol.md](docs/speech-stream-protocol.md) - bounded native event protocol, endpointing, and final-only execution
 - [docs/development-plan.md](docs/development-plan.md) - roadmap from contracts to productization
 - [docs/architecture.md](docs/architecture.md) - intended system shape and repository conventions
 - [docs/reviews/README.md](docs/reviews/README.md) - phase-end code review gate convention

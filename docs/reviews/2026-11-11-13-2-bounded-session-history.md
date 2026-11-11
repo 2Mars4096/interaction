@@ -14,6 +14,7 @@
 - Full suite: **525 passed**; critical Ruff and `git diff --check` passed.
 - Sixteen added retention regressions cover object release, 500 partial events, aligned snapshots, exact counters over 201 primary captures, history-limit-one confirmations, tracking-loss cancellation after eviction, short-session compatibility, and complete replay.
 - Independent review also ran 90 existing voice/fusion/gaze/calibration/productization checks.
+- [CI run 42991869107](https://github.com/2Mars4096/interaction/actions/runs/42991869107) passed for commit `b121631`, including the Linux/macOS matrix and installed distributions.
 
 ## Limits
 - The limit bounds record counts, not the size of an arbitrary record. Streaming protocol byte/event caps follow in section 13-3.

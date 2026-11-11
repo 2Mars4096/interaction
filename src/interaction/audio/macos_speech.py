@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 import hashlib
 from pathlib import Path
 import json
@@ -31,6 +32,18 @@ class LiveSpeechCapture:
     provider: str = "macos_speech"
     used_on_device: bool | None = None
     permission_state: str | None = None
+    capture_mode: str = "recorded"
+    endpoint_reason: str | None = None
+    max_duration_s: float | None = None
+
+
+@dataclass(frozen=True)
+class SpeechStreamEvent:
+    """A display-only native speech update; executable text is returned separately."""
+
+    kind: str
+    transcript: str | None = None
+    elapsed_s: float | None = None
 
 
 class SpeechCaptureError(RuntimeError):
@@ -53,6 +66,7 @@ class MacOSLiveSpeechProvider:
         helper_source: Path | None = None,
         helper_info: Path | None = None,
         command_runner=None,
+        process_factory=None,
         platform: str | None = None,
         architecture: str | None = None,
         os_version: str | None = None,
@@ -61,6 +75,7 @@ class MacOSLiveSpeechProvider:
         self.helper_source = Path(helper_source) if helper_source is not None else Path(__file__).with_name("macos_speech_bridge.m")
         self.helper_info = Path(helper_info) if helper_info is not None else Path(__file__).with_name("macos_speech_info.plist")
         self.command_runner = command_runner or self._default_runner
+        self.process_factory = process_factory or subprocess.Popen
         self.platform = sys.platform if platform is None else platform
         self.architecture = host_platform.machine() if architecture is None else architecture
         self.os_version = (host_platform.mac_ver()[0] or host_platform.release()) if os_version is None else os_version
@@ -264,6 +279,24 @@ class MacOSLiveSpeechProvider:
             confidence=float(raw_confidence) if raw_confidence is not None else None,
             locale=locale, duration_s=duration_s,
             provider="macos_speech", used_on_device=used_on_device, permission_state=permission_state,
+        )
+
+    def capture_stream(
+        self,
+        *,
+        duration_s: float = 4.0,
+        locale: str = "en-US",
+        silence_duration_s: float = 0.8,
+        on_event: Callable[[SpeechStreamEvent], None] | None = None,
+    ) -> LiveSpeechCapture:
+        """Recognize live buffers, publishing previews but returning only a validated final."""
+        from .streaming import run_speech_stream, validate_stream_arguments
+
+        duration, language, silence = validate_stream_arguments(duration_s, locale, silence_duration_s)
+        binary = self.ensure_helper()
+        return run_speech_stream(
+            binary, duration_s=duration, locale=language, silence_duration_s=silence,
+            process_factory=self.process_factory, on_event=on_event,
         )
 
     @staticmethod

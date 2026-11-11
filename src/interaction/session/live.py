@@ -79,7 +79,10 @@ class LiveEventBuffer(BoundedHistory[object]):
         self.serialized_events.append(payload)
         super().append(event)
         message = payload["message"]
-        if message:
+        is_preview = bool(payload["transcript"]) and payload["phase"] in {"listening", "tracking", "confirming"}
+        if message and not is_preview:
             print(f'[{payload["phase"]}] {message}', file=self.stream, flush=True)
         if payload["transcript"] and payload["phase"] == "interpreting":
             print(f'Heard: {payload["transcript"]}', file=self.stream, flush=True)
+        elif is_preview:
+            print(f'Hearing: {payload["transcript"]}', file=self.stream, flush=True)

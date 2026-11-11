@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from dataclasses import asdict
 from typing import Any
 from types import SimpleNamespace
 
-from interaction.audio import MacOSLiveSpeechProvider, SpeechCaptureError
+from interaction.audio import MacOSLiveSpeechProvider, SpeechCaptureError, SpeechStreamEvent
 from interaction.contracts import ActionName, EnvironmentSnapshot, GazeObservation
 from interaction.feedback import (
     FusionFeedbackEvent,
@@ -153,6 +154,12 @@ def _build_parser() -> argparse.ArgumentParser:
     fusion_live.add_argument("--continuous", action="store_true", help="Listen for successive commands until 'stop listening' or Ctrl-C.")
     fusion_live.add_argument("--confirmation-attempts", type=_positive_int, default=2)
 
+    for speech_parser in (voice_live, fusion_live):
+        speech_parser.add_argument("--speech-mode", choices=("recorded", "stream"), default="recorded",
+                                   help="Record a fixed window or stream speech with live previews.")
+        speech_parser.add_argument("--silence-duration", type=_silence_duration, default=0.8,
+                                   help="Seconds of silence after speech to end a streamed turn (0.2–5).")
+
     for live_parser in (voice_live, fusion_live, gaze_live, gaze_calibrate):
         live_parser.add_argument("--history-limit", type=_positive_int, default=DEFAULT_HISTORY_LIMIT,
                                  help="Maximum entries retained per live history; the event journal remains complete.")
@@ -172,6 +179,39 @@ def _positive_int(value: str) -> int:
 
 def _is_session_stop_command(utterance: str) -> bool:
     return normalize_command(utterance).lower() in {"stop", "stop listening", "pause", "quit", "exit"}
+
+
+def _silence_duration(value: str) -> float:
+    seconds = float(value)
+    if not math.isfinite(seconds) or not 0.2 <= seconds <= 5.0:
+        raise argparse.ArgumentTypeError("must be a finite number between 0.2 and 5 seconds")
+    return seconds
+
+
+def _capture_live_speech(provider, args: argparse.Namespace, *, duration_s: float, events: LiveEventBuffer):
+    if args.speech_mode == "recorded":
+        return provider.capture_turn(duration_s=duration_s, locale=args.locale)
+
+    def preview(event: SpeechStreamEvent) -> None:
+        # The provider only exposes validated display events here. Even a
+        # complete-looking preview must never reach interpretation or execution.
+        if event.kind == "ready":
+            message = "Microphone ready."
+        elif event.kind == "partial":
+            message = "Speech preview."
+        else:
+            raise SpeechCaptureError("invalid_stream_event", "Unexpected speech preview event.")
+        if events.source == "voice":
+            events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.LISTENING, message=message, transcript=event.transcript))
+        else:
+            events.append(FusionFeedbackEvent(phase=FusionLoopPhase.TRACKING, message=message, transcript=event.transcript))
+
+    return provider.capture_stream(
+        duration_s=duration_s,
+        locale=args.locale,
+        silence_duration_s=args.silence_duration,
+        on_event=preview,
+    )
 
 
 def _run_voice_smoke(args: argparse.Namespace, store: JsonStateStore) -> dict[str, Any]:
@@ -218,7 +258,7 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         ))
         try:
             before = capture_environment()
-            capture = provider.capture_turn(duration_s=duration, locale=args.locale)
+            capture = _capture_live_speech(provider, args, duration_s=duration, events=events)
             # Session controls do not act on a desktop target. Honor stop
             # before focus validation so changing/unknown focus cannot keep
             # the microphone session running against the user's request.
@@ -237,8 +277,11 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
         except SpeechCaptureError as error:
             payload = {"status": "error", "error": error.code, "message": error.message, "payload": error.payload}
             (confirmation_captures if confirmation else captures).append(payload)
-            if error.code == "empty_transcript" and (args.continuous or confirmation):
-                events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.LISTENING, message="No speech heard."))
+            if error.code in {"empty_transcript", "capture_limit_reached"} and (args.continuous or confirmation):
+                events.append(VoiceFeedbackEvent(
+                    phase=VoiceLoopPhase.LISTENING if error.code == "empty_transcript" else VoiceLoopPhase.RECOVERING,
+                    message="No speech heard." if error.code == "empty_transcript" else error.message,
+                ))
                 return True
             events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message=error.message))
             loop.pending_decision = None
@@ -253,6 +296,7 @@ def _run_voice_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str
             after,
             final_confidence=capture.confidence,
             begin_turn=False,
+            scripted_partials=False,
         ))
         return True
 
@@ -677,7 +721,9 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
         ))
         try:
             before = capture_environment()
-            capture = provider.capture_turn(duration_s=args.confirm_duration if confirmation else args.duration, locale=args.locale)
+            capture = _capture_live_speech(
+                provider, args, duration_s=args.confirm_duration if confirmation else args.duration, events=events,
+            )
             # Stop cancels work without requiring a target, usable focus, or
             # a healthy camera snapshot. No action is dispatched on this path.
             if _is_session_stop_command(capture.transcript):
@@ -693,9 +739,12 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
                 raise SpeechCaptureError("context_changed", "The active application or window changed while listening. Please repeat the command.")
         except SpeechCaptureError as error:
             history.append({"status": "error", "error": error.code, "message": error.message, "payload": error.payload})
-            if error.code == "empty_transcript" and (args.continuous or confirmation):
+            if error.code in {"empty_transcript", "capture_limit_reached"} and (args.continuous or confirmation):
                 update_current_gaze()
-                events.append(FusionFeedbackEvent(phase=FusionLoopPhase.TRACKING, message="No speech heard."))
+                events.append(FusionFeedbackEvent(
+                    phase=FusionLoopPhase.TRACKING if error.code == "empty_transcript" else FusionLoopPhase.RECOVERING,
+                    message="No speech heard." if error.code == "empty_transcript" else error.message,
+                ))
                 return True
             cancel_pending()
             events.append(FusionFeedbackEvent(phase=FusionLoopPhase.RECOVERING, message=error.message))
@@ -706,7 +755,7 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
             return False
         history.append(_speech_capture_payload(capture))
         update_current_gaze()
-        events.extend(loop.run_voice_turn(capture.transcript, after, final_confidence=capture.confidence))
+        events.extend(loop.run_voice_turn(capture.transcript, after, final_confidence=capture.confidence, scripted_partials=False))
         return True
 
     try:

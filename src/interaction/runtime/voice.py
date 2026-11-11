@@ -70,11 +70,17 @@ class VoiceCommandLoop:
         *,
         final_confidence: float | None = 1.0,
         begin_turn: bool = True,
+        scripted_partials: bool = True,
     ) -> list[VoiceFeedbackEvent]:
         events: list[VoiceFeedbackEvent] = []
         if begin_turn:
             events.append(self.begin_turn())
-        segments = self.transcriber.stream(utterance, final_confidence=final_confidence)
+        if scripted_partials:
+            segments = self.transcriber.stream(utterance, final_confidence=final_confidence)
+        elif utterance.strip():
+            segments = [TranscriptSegment(text=utterance, is_final=True, confidence=final_confidence)]
+        else:
+            segments = []
         if not segments:
             events.append(VoiceFeedbackEvent(phase=VoiceLoopPhase.RECOVERING, message="I did not receive any speech content."))
             self.turn_manager.reset()

@@ -1,6 +1,6 @@
 """Audio and turn-handling primitives for the voice loop."""
 
-from .macos_speech import LiveSpeechCapture, MacOSLiveSpeechProvider, SpeechCaptureError
+from .macos_speech import LiveSpeechCapture, MacOSLiveSpeechProvider, SpeechCaptureError, SpeechStreamEvent
 from .transcription import ScriptedTranscriber
 from .turns import PushToTalkTurnManager, TurnPhase
 
@@ -10,5 +10,6 @@ __all__ = [
     "PushToTalkTurnManager",
     "ScriptedTranscriber",
     "SpeechCaptureError",
+    "SpeechStreamEvent",
     "TurnPhase",
 ]

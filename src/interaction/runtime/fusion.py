@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from interaction.audio import ScriptedTranscriber
-from interaction.contracts import BrokerDecision, BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget
+from interaction.contracts import BrokerDecision, BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget, TranscriptSegment
 from interaction.control import CommandBroker
 from interaction.feedback import FusionFeedbackEvent, FusionLoopPhase
 from interaction.intent import FusionIntentResolver, VoiceDirectiveType, VoiceIntentInterpreter
@@ -135,10 +135,17 @@ class MultimodalFusionLoop:
         environment: EnvironmentSnapshot,
         *,
         final_confidence: float | None = 1.0,
+        scripted_partials: bool = True,
     ) -> list[FusionFeedbackEvent]:
         self.metrics.total_turns += 1
         events: list[FusionFeedbackEvent] = []
-        for segment in self.transcriber.stream(utterance, final_confidence=final_confidence):
+        if scripted_partials:
+            segments = self.transcriber.stream(utterance, final_confidence=final_confidence)
+        elif utterance.strip():
+            segments = [TranscriptSegment(text=utterance, is_final=True, confidence=final_confidence)]
+        else:
+            segments = []
+        for segment in segments:
             if not segment.is_final:
                 events.append(FusionFeedbackEvent(phase=FusionLoopPhase.TRACKING, message="Partial fusion transcript update.", transcript=segment.text))
                 continue

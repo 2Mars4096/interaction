@@ -13,10 +13,12 @@ Define when the first tester-facing macOS prototype is ready for a real user tri
 - `interaction gaze-smoke` or `python scripts/phase5_productization_smoke.py gaze-smoke` for the scripted gaze baseline
 - `python scripts/phase3_webcam_smoke.py --frames 12` for the lower-level webcam provider diagnostic
 - `interaction fusion-smoke` for the repeatable dry-run fusion path
+- `interaction voice-live --continuous --speech-mode stream --duration 8` and the equivalent `fusion-live` command for opt-in real transcript previews and silence endpointing
 
 ## Acceptance Targets
 
 - **Voice latency:** the live voice path should either return a final transcript or a structured failure message within 10 seconds of starting a 4-second capture window.
+- **Streaming trial:** measure time from end of speech to valid final feedback separately from microphone startup. Verify that natural pauses are not clipped, silence completes short turns before the maximum, and an active turn reaching the maximum never executes. Compare against recorded mode; automated checks do not establish this latency or accuracy.
 - **Webcam calibration:** save only after complete timed samples at all five visible fitting points and four separate validation points satisfy error and mapped-dispersion gates; failures/cancellation return structured feedback and preserve the previous profile.
 - **Webcam gaze startup:** the live webcam path should either begin producing target/recovery events or fail structurally within 5 seconds of startup.
 - **Large-target gaze reaction:** the scripted and webcam-backed gaze paths should highlight a stable large target within about 1 second of dwell when permissions and lighting are acceptable.
@@ -50,7 +52,7 @@ interaction fusion-smoke
 
 ## Notes
 
-- The tester-facing path includes bounded/continuous voice and fusion command sessions, live webcam gaze, cursor follow, and explicit dwell manipulation. Fusion keeps one camera worker active across commands and confirmations. Webcam gaze remains heuristic and region-based; speech still uses recording windows, and native hardware performance remains unmeasured by the automated checks.
+- The tester-facing path includes bounded/continuous voice and fusion command sessions, live webcam gaze, cursor follow, and explicit dwell manipulation. Fusion keeps one camera worker active across commands and confirmations. Webcam gaze remains heuristic and region-based; speech supports recorded windows and opt-in streaming, and native hardware performance remains unmeasured by the automated checks.
 - The cursor-follow path exposes tunable `deadzone`, `smoothing`, `edge_padding`, and `max_step` controls for per-machine adjustment during manual testing.
 - The gaze-only dwell path now also exposes `action_cooldown_ms` and `drag_timeout_ms` controls so testers can reduce repeated clicks and recover cleanly from an abandoned drag arm.
 - This document closes the backlog item around acceptable latency, accuracy, and accidental-action targets for the first MVP trial.

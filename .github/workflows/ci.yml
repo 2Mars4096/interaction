@@ -76,7 +76,7 @@ jobs:
       - name: Verify an isolated installed wheel
         if: runner.os != 'macOS'
         run: python scripts/verify_installed_package.py --dist-dir dist --requirements requirements-dev.lock
-      - name: Verify the installed wheel and compile its native helper
+      - name: Verify the installed wheel and native helper
         if: runner.os == 'macOS'
-        # Compile only: the probe never runs speech capture or requests hardware permissions.
+        # Compile and probe invalid arguments; never capture speech or request hardware permissions.
         run: python scripts/verify_installed_package.py --dist-dir dist --requirements requirements-dev.lock --compile-native

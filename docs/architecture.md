@@ -111,6 +111,9 @@ src/interaction/
 - `src/interaction/audio/macos_speech.py` now provides the Phase 6 macOS live speech wrapper, and `src/interaction/audio/macos_speech_bridge.m` is the small native helper source compiled on demand into `.interaction/bin/`.
 - Native speech resources include `macos_speech_info.plist` with microphone/speech usage descriptions embedded by the linker. Helper caching uses source, metadata, build flags, and OS/architecture identity; compilation and capture are bounded subprocesses.
 - Speech recordings live in a parent-owned temporary directory, allowing cleanup when a child exits, times out, or is interrupted. Native payload types are validated before constructing transcript events.
+- Optional stream mode uses AVAudioEngine buffers and SFSpeechAudioBufferRecognitionRequest directly, without a recording file. Audio energy and real quiet buffers determine a silence endpoint; an active utterance cut off by the capture maximum is rejected. Finalization has a separate bounded grace period.
+- `audio/streaming.py` validates versioned JSONL events and drains stdout/stderr with line, byte, event, and lifetime caps. It returns executable text only after one valid final, complete output, and exit zero. Timeout, Ctrl-C, callback failure, and malformed output terminate/reap the helper and close pipes.
+- Native stream callbacks publish display-only `SpeechStreamEvent` updates; `LiveEventBuffer` shows and journals previews immediately. Live final transcripts bypass scripted word-prefix simulation; smoke paths keep it.
 - `src/interaction/intent/voice.py` provides the bounded pattern-based voice interpreter.
 - `src/interaction/feedback/voice.py` provides event-level voice feedback states.
 - `src/interaction/runtime/voice.py` coordinates transcript segments, interpretation, broker decisions, confirmations, cancellations, and execution.
@@ -144,7 +147,7 @@ src/interaction/
 - `src/interaction/session/logging.py` now provides structured JSONL session logging and replay helpers.
 - `src/interaction/session/live.py` publishes live CLI feedback to stderr, journals events immediately, and updates overlay state without duplicating records when the final JSON payload is built.
 - Its `BoundedHistory` retains the most recent entries with exact lifetime counts. Live events, serialized output, overlay snapshots, and speech capture summaries use bounded retention; JSONL feedback journals are complete. `--history-limit` configures live voice/fusion/gaze/calibration retention, and final `history` metadata makes omissions explicit.
-- `voice-live` can retain one command loop for bounded multiple commands or `--continuous` sessions, including required confirmation turns. Native speech capture is still windowed, not streaming.
+- `voice-live` can retain one command loop for bounded multiple commands or `--continuous` sessions, including required confirmation turns. Both voice and fusion select recorded or opt-in streamed capture using the same helper and policy boundaries.
 - `fusion-live` uses the same session options while retaining one camera worker for its entire lifetime. Startup requires calibration and an initial gaze lock; each later turn refreshes gaze and foreground context. Retryable silence/context changes do not restart the camera, and shutdown clears pending actions before joining the worker.
 - `src/interaction/persistence/store.py` now provides workspace-local runtime paths, persisted settings, and calibration-profile storage.
 - `src/interaction/app.py` now provides the local CLI entry point for repeatable voice, gaze, fusion, and replay flows.
@@ -153,4 +156,4 @@ src/interaction/
 - `scripts/phase7_webcam_calibrate.py` and `scripts/phase7_live_webcam_smoke.py` are the repo-local wrappers for the webcam calibration and live-gaze tester paths.
 - `requirements-dev.lock` is the hashed universal dependency baseline; `constraints-test.txt` records deliberately selected runtime/test tool versions. Project compatibility ranges stay in `pyproject.toml`.
 - `scripts/verify_distribution.py` checks packaged native resources in wheel/sdist. `scripts/verify_installed_package.py` creates a clean environment outside the checkout and verifies imports, entry point, native resources, and optional macOS compile/cache behavior.
-- GitHub Actions covers Linux/macOS Python 3.11–3.13 unit tests and separate distribution/native-compilation checks. CI uses locked build tools without build isolation and does not invoke hardware input or desktop actions.
+- GitHub Actions covers Linux/macOS Python 3.11–3.13 unit tests and separate distribution/native-compilation checks. The installed native helper also rejects invalid streaming arguments with a versioned error before permissions/audio startup. CI uses locked build tools without build isolation and does not invoke hardware input or desktop actions.
