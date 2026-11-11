@@ -109,6 +109,8 @@ src/interaction/
 - `scripts/phase1_macos_smoke.py` is the safe manual smoke harness for this phase.
 - `src/interaction/audio/` now contains the Phase 2 transcript-stream and push-to-talk turn primitives.
 - `src/interaction/audio/macos_speech.py` now provides the Phase 6 macOS live speech wrapper, and `src/interaction/audio/macos_speech_bridge.m` is the small native helper source compiled on demand into `.interaction/bin/`.
+- Native speech resources include `macos_speech_info.plist` with microphone/speech usage descriptions embedded by the linker. Helper caching uses source, metadata, build flags, and OS/architecture identity; compilation and capture are bounded subprocesses.
+- Speech recordings live in a parent-owned temporary directory, allowing cleanup when a child exits, times out, or is interrupted. Native payload types are validated before constructing transcript events.
 - `src/interaction/intent/voice.py` provides the bounded pattern-based voice interpreter.
 - `src/interaction/feedback/voice.py` provides event-level voice feedback states.
 - `src/interaction/runtime/voice.py` coordinates transcript segments, interpretation, broker decisions, confirmations, cancellations, and execution.
@@ -147,3 +149,6 @@ src/interaction/
 - `scripts/phase5_productization_smoke.py` is the repo-local smoke wrapper for the Phase 5 CLI.
 - `scripts/phase6_live_voice_smoke.py` is the repo-local smoke wrapper for the live macOS voice path.
 - `scripts/phase7_webcam_calibrate.py` and `scripts/phase7_live_webcam_smoke.py` are the repo-local wrappers for the webcam calibration and live-gaze tester paths.
+- `requirements-dev.lock` is the hashed universal dependency baseline; `constraints-test.txt` records deliberately selected runtime/test tool versions. Project compatibility ranges stay in `pyproject.toml`.
+- `scripts/verify_distribution.py` checks packaged native resources in wheel/sdist. `scripts/verify_installed_package.py` creates a clean environment outside the checkout and verifies imports, entry point, native resources, and optional macOS compile/cache behavior.
+- GitHub Actions covers Linux/macOS Python 3.11–3.13 unit tests and separate distribution/native-compilation checks. CI uses locked build tools without build isolation and does not invoke hardware input or desktop actions.

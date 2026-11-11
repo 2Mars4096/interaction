@@ -14,7 +14,7 @@
 - [x] [12-2-live-context](12-2-live-context.md): real time, bounded pending actions, actual application context, and fresh live fusion.
 - [x] [12-3-calibration-quality](12-3-calibration-quality.md): visible calibration, signed fitting, independent validation, and persisted quality.
 - [x] [12-4-tracking-recovery](12-4-tracking-recovery.md): tracking-loss recovery, dwell rearming, and meaningful target-lock evidence.
-- [ ] 12-5: reproducible dependencies, packaged native helpers, and Linux/macOS CI (not yet planned).
+- [ ] [12-5-build-and-ci](12-5-build-and-ci.md): reproducible dependencies, packaged native helpers, and Linux/macOS CI.
 
 ## Boundaries
 - This phase repairs the source currently on GitHub; the newer native application described in the review is not in this tree.

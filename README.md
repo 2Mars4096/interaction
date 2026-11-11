@@ -236,11 +236,31 @@ Only a successful validation replaces the saved profile. Failed or cancelled att
 
 ## Quick Start
 
+The CI baseline exercises Python 3.11, 3.12, and 3.13 on Linux and macOS. Use Python 3.12 for the following development setup:
+
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-pytest
+python -m pip install --require-hashes -r requirements-dev.lock
+python -m pip install --no-deps --no-build-isolation -e .
+python -m pytest -q
 ```
 
-At this point, `pytest` verifies the end-to-end prototype slices through the completed Phase 8 live-multimodal patch. Remaining gaps are tracked in [docs/bugs.md](docs/bugs.md) and [docs/todo.md](docs/todo.md).
+The compatibility ranges in `pyproject.toml` exclude OpenCV 5, which removed APIs used by this tracker. `requirements-dev.lock` records the exact runtime, test, and build dependency baseline with hashes. To refresh it deliberately, use the command in its header and review changes to `constraints-test.txt`.
+
+Live microphone capture requires macOS and the Xcode command-line tools (`clang`). Calibration needs Tk and a desktop display. The speech helper packages and embeds its microphone/speech usage descriptions, builds into a cache identified by source/platform information, and reports build/capture failures with finite deadlines. Parent-owned temporary recordings are removed when capture finishes, fails, times out, or is interrupted.
+
+## Build and CI
+
+```bash
+python -m ruff check --select E9,F63,F7,F82 src tests scripts
+python -m build --no-isolation
+python scripts/verify_distribution.py --dist-dir dist
+python scripts/verify_installed_package.py --dist-dir dist --requirements requirements-dev.lock
+```
+
+The default build produces a source distribution and builds the wheel from that archive using the already locked build tools. Verification checks the native helper and permission metadata in both archives. The installed-package probe creates a separate environment outside the checkout, installs the wheel and hashed dependencies, and checks imports, the CLI entry point, and OpenCV's Haar resources.
+
+On macOS, add `--compile-native` to the installed-package check to compile and cache the installed helper without running capture. GitHub Actions runs unit tests across the Python/platform matrix and the distribution checks on Linux/macOS. These checks do not open the camera, record audio, request desktop permissions, or move the pointer.
+
+Automated checks cover the Phase 9 reliability work; camera accuracy and native interaction still need hardware evaluation. Remaining gaps are tracked in [docs/bugs.md](docs/bugs.md) and [docs/todo.md](docs/todo.md).

@@ -1,0 +1,5 @@
+include constraints-test.txt
+include requirements-dev.lock
+recursive-include scripts *.py
+recursive-include tests *.py
+recursive-include docs *.md

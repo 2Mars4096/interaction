@@ -2,10 +2,12 @@
 
 ## Open Bugs
 
-- OpenCV 5 removes APIs used by this provider; dependency compatibility and native helper packaging need explicit gates (Phase 9 section 5).
+- Phase 9 fixes are covered by automated checks. Remaining product and hardware limitations are listed below.
 
 ## Resolved in Phase 9
 
+- Section 5: OpenCV compatibility is bounded below 5, the tested dependency baseline is hashed, and wheel/sdist/install checks require the native helper and permission metadata.
+- Section 5: native helper deadlines, strict payload validation, atomic versioned caching, and parent-owned audio cleanup cover build/runtime failure paths.
 - Section 4: dropped/weak tracking and long camera gaps clear partial dwell and armed drag; cooldown or loss cannot cause repeated same-target dwell actions.
 - Section 4: live locks require consecutive unsmoothed evidence with count, duration, displacement, and gap limits. Final missing/unstable readings invalidate earlier bounded-capture locks.
 - Section 4: target inference no longer inflates detection confidence, and coordinate clamping cannot create false stable edge evidence.

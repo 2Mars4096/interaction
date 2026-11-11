@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-11 — Section 5
+- [infra] Bounded dependency compatibility, excluded OpenCV 5, and added a universal hashed runtime/test/build baseline.
+- [fix] Packaged native speech source and embedded permission metadata in distributions; made helper compilation/capture bounded, typed, and recoverable with source/platform-aware caching.
+- [fix] Made recording cleanup parent-owned so timeout and interruption remove temporary audio.
+- [infra] Added Linux/macOS CI, critical lint, wheel-from-sdist verification, isolated installed-package checks, and compile-only native verification.
+
 ## 2026-11-11 — Section 4
 - [fix] Cleared smoothing, partial dwell, and armed drag on lost/weak tracking or long camera gaps; preserved a fired target's disarmed state until deliberate look-away.
 - [fix] Separated actual elapsed time from observed fixation duration so target transitions cannot count as a completed look-away or a new dwell.

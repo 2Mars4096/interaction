@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=69,<85", "wheel>=0.45,<1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,9 +9,9 @@ description = "Multimodal computer interaction via realtime voice and gaze contr
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "numpy>=1.26",
-  "opencv-python>=4.10",
-  "pydantic>=2.8",
+  "numpy>=1.26,<3",
+  "opencv-python>=4.10,<5",
+  "pydantic>=2.8,<3",
 ]
 
 [project.scripts]
@@ -19,8 +19,11 @@ interaction = "interaction.app:cli"
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0",
-  "ruff>=0.11",
+  "pytest>=8.0,<10",
+  "ruff>=0.11,<1",
+  "build>=1.2,<2",
+  "setuptools>=69,<85",
+  "wheel>=0.45,<1",
 ]
 
 [tool.setuptools]
@@ -28,6 +31,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"interaction.audio" = ["macos_speech_bridge.m", "macos_speech_info.plist"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

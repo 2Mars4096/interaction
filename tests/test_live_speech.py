@@ -15,9 +15,13 @@ def test_live_speech_provider_builds_and_parses_success(tmp_path: Path) -> None:
     helper_source.write_text("int main(void) { return 0; }\n")
     seen_commands: list[list[str]] = []
 
-    def runner(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def runner(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
         seen_commands.append(command)
         if command[0] == "clang":
+            assert timeout == 60
+            binary = Path(command[command.index("-o") + 1])
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(
             command,
@@ -37,7 +41,7 @@ def test_live_speech_provider_builds_and_parses_success(tmp_path: Path) -> None:
             stderr="",
         )
 
-    provider = MacOSLiveSpeechProvider(paths, helper_source=helper_source, command_runner=runner)
+    provider = MacOSLiveSpeechProvider(paths, helper_source=helper_source, command_runner=runner, platform="darwin")
     capture = provider.capture_turn(duration_s=1.5, locale="en-US")
 
     assert capture == LiveSpeechCapture(
@@ -58,8 +62,11 @@ def test_live_speech_provider_surfaces_structured_error(tmp_path: Path) -> None:
     helper_source = tmp_path / "bridge.m"
     helper_source.write_text("int main(void) { return 0; }\n")
 
-    def runner(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def runner(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
         if command[0] == "clang":
+            binary = Path(command[command.index("-o") + 1])
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(
             command,
@@ -74,7 +81,7 @@ def test_live_speech_provider_surfaces_structured_error(tmp_path: Path) -> None:
             stderr="",
         )
 
-    provider = MacOSLiveSpeechProvider(paths, helper_source=helper_source, command_runner=runner)
+    provider = MacOSLiveSpeechProvider(paths, helper_source=helper_source, command_runner=runner, platform="darwin")
 
     try:
         provider.capture_turn(duration_s=1.0, locale="en-US")

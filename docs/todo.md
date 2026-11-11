@@ -71,7 +71,7 @@
   - [x] [12-2-live-context](plans/12-2-live-context.md) — timing, pending actions, and live context
   - [x] [12-3-calibration-quality](plans/12-3-calibration-quality.md) — calibration validity and visible targets
   - [x] [12-4-tracking-recovery](plans/12-4-tracking-recovery.md) — tracking loss and deliberate dwell
-  - [ ] 12-5: Dependencies, packaging, and CI (not yet planned)
+  - [ ] [12-5-build-and-ci](plans/12-5-build-and-ci.md) — dependencies, packaging, and CI
 
 ## Backlog (unphased)
 - [x] Define acceptable latency, accuracy, and accidental-action targets
