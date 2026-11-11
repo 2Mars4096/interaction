@@ -11,7 +11,8 @@
 - [x] Expose streaming mode and silence interval to live voice/fusion commands while preserving recorded capture as the compatibility default.
 - [x] Show real partial transcripts immediately on stderr and record them through the existing live event journal; no partial enters the broker.
 - [x] Exercise real harmless-child protocol/lifecycle failures and CLI integration; record hardware checks separately.
-- [ ] Compile packaged native resources and run pre-permission argument probes on macOS CI.
+- [x] Compile packaged native resources and run pre-permission argument probes on macOS CI.
+- [ ] Pass the complete CI matrix after correcting confirmation feedback identified by the first run.
 
 ## Decisions
 - Never promote a partial transcript after timeout or recognition error. Silence requests finalization; it does not authorize partial text.
@@ -21,6 +22,6 @@
 - Protocol, provider callback, CLI options, numeric/output limits, and source references are specified in [speech-stream-protocol](../speech-stream-protocol.md).
 
 ## Verification
-- 621 tests passed locally, including 60 real-child transport cases and live-session streaming integration checks.
+- 623 tests passed locally after the confirmation-feedback fix, including 60 transport regressions and live-session streaming integration checks.
 - Independent Python/CLI/native code review passed after fixing malformed endpoint metadata handling. Native finalization is bounded from the actual capture endpoint.
-- Native compilation and installed-helper argument probes are the remaining CI gate. Acoustic latency/accuracy evaluation remains separate.
+- Native compilation and installed-helper argument probes passed in [CI](https://github.com/2Mars4096/interaction/actions/runs/42993369577). The complete matrix must pass with the confirmation-feedback fix before closure. Acoustic latency/accuracy evaluation remains separate.

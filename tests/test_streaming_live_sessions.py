@@ -55,6 +55,8 @@ def run_session(monkeypatch, tmp_path, validated_profile, command, turns, *optio
         def capture_stream(self, *, duration_s, locale, silence_duration_s, on_event):
             calls.append({"mode": "stream", "duration_s": duration_s, "locale": locale, "silence_duration_s": silence_duration_s})
             turn = next(scripted_turns)
+            if "expected_prompt" in turn:
+                assert turn["expected_prompt"] in feedback.getvalue(), "The confirmation prompt must be visible before recording."
             action_count = len(executions)
             interpretation_count = len(interpretations)
             on_event(SpeechStreamEvent(kind="ready"))
@@ -142,7 +144,8 @@ def test_partial_then_error_never_executes_or_falls_back(monkeypatch, tmp_path, 
 def test_commands_and_confirmations_use_selected_stream_settings(monkeypatch, tmp_path, validated_profile, command):
     payload, records, calls, executions = run_session(
         monkeypatch, tmp_path, validated_profile, command,
-        [{"partials": ["type Hello"], "text": "type Hello,  world!"}, {"partials": ["yes"], "text": "yes"}],
+        [{"partials": ["type Hello"], "text": "type Hello,  world!"},
+         {"partials": ["yes"], "text": "yes", "expected_prompt": 'Confirm typing: "Hello,  world!"?'}],
         "--duration", "3", "--confirm-duration", "1.5", "--silence-duration", "1.2", "--locale", "en-GB",
     )
     assert len(executions) == 1

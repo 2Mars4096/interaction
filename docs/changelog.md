@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-11 — Phase 10 Section 3
+- [fix] Preserved confirmation prompts when displaying partial transcripts; CI caught the broad preview classifier, and recorded/streamed prompt-order regressions now pass in the 623-test suite.
 - [feat] Added opt-in native streaming speech with genuine partial previews, audio-based silence endpointing, measured capture metadata, and a separate finalization deadline.
 - [fix] Required a valid final transcript, complete bounded JSONL output, and successful helper exit before dispatch; clipped maximum-duration speech, errors, and partials cannot execute.
 - [fix] Removed synthetic partial generation from live final turns while retaining deterministic smoke behavior, and cleaned up helper processes on timeout, interruption, and callback failure.

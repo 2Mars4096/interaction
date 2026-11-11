@@ -6,6 +6,7 @@
 
 ## Resolved in Phase 10
 
+- Section 3: confirmation requests retain their visible prompt even though they carry a final transcript. Preview rendering excludes decision/proposal/result events and suppresses only the generic preview status.
 - Section 3: optional streaming feeds live audio into recognition, displays actual partials, and ends at observed silence or a recognizer final instead of imposing the entire recording window.
 - Section 3: partials and maximum-duration clipped speech cannot authorize actions; malformed, oversized, timed-out, or unsuccessful native output is rejected, with child-process cleanup.
 - Section 3: live final transcripts no longer generate misleading synthetic word-prefix previews after recognition has already completed.
@@ -55,5 +56,6 @@
 
 ## Failed Approaches
 
+- Classifying every listening/tracking/confirming event with a transcript as a partial hid confirmation prompts. The first Phase 10 streaming CI run exposed this; regression checks now require prompts before both recorded and streamed confirmation capture.
 - The first Phase 9 workflow used `macos-14`, which GitHub Actions retired on November 2, 2026. Those jobs were cancelled before setup; the workflow now uses the supported `macos-15` label. Check the [runner retirement announcements](https://github.com/actions/runner-images/issues/13518) when changing CI images.
 - A direct Swift bridge to `Speech.framework` was rejected in this environment because the local Swift compiler and installed SDK do not match closely enough to build Foundation-backed framework imports reliably; the Phase 6 live speech path uses Objective-C plus `clang` instead.
