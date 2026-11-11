@@ -175,6 +175,14 @@ Voice and fusion sessions inspect the foreground application and window before a
 
 These checks identify an application/window and coarse screen region. Exact controls and editable fields still require Accessibility target integration.
 
+### Tracking loss and dwell
+
+Live capture uses measured monotonic time; `--delta-ms` is a minimum sampling delay. A camera stall does not count as time looking at a target. Missing, weak, invalid, or out-of-screen readings clear partial dwell and cancel an armed drag. Live gaze feedback is delivered immediately, and Ctrl-C ends the session with cleanup.
+
+A dwell action fires once while you keep looking at the same target. Waiting out the cooldown or briefly losing tracking does not rearm it. Look away with valid tracking for at least 200 ms, then complete a fresh dwell at the desired target. Valid look-away can be another coarse region or an area outside the current target set.
+
+Fusion and cursor follow require at least three samples over 120 ms, within a 0.05 normalized-point radius, with no sampling gap above 250 ms. These checks use unsmoothed positions. Returned lock evidence reports sample count and duration; the confidence value remains a detector heuristic, separate from calibration error measurements.
+
 ### Visible calibration and validation
 
 Run `interaction gaze-calibrate` on the primary display. A visible dot moves through five fitting positions, then four different positions to check the fitted mapping. Keep your head comfortably still and look at each dot; press Escape or Ctrl-C to cancel. Tk and a desktop display are required. Progress appears immediately in the terminal as well as on screen.

@@ -129,6 +129,10 @@ src/interaction/
 - `src/interaction/runtime/clock.py` supplies the injected monotonic clock; worker observations retain their original timestamps. Explicit `advance()` remains a scripted simulation facility.
 - `src/interaction/runtime/pending.py` binds confirmation to the proposal's creation time, environment, target revision, and gaze point. Tracking loss cancels pending pointer actions.
 - `src/interaction/runtime/live_gaze.py` owns camera open/read/close on one background worker while the main thread captures speech and interprets commands. Stable snapshots carry freshness and loss/target-change revisions.
+- `src/interaction/vision/stability.py` shares unsmoothed stable-target evidence across the worker, cursor follow, and bounded context capture: sample count, duration, confidence, displacement, gap, and revision.
+- `src/interaction/runtime/sampling.py` paces synchronous live reads and records measured timestamps. Live gaze separates elapsed time for timeouts/cooldown from observed same-target fixation time.
+- Dwell preserves its fired-target latch across tracking loss and cooldown; sustained valid look-away rearms it. Missing/weak/gapped tracking resets smoothing and partial dwell and cancels armed drag.
+- Target confidence no longer adds a constant boost to detector evidence. Calibration quality, tracking continuity, and detection confidence remain distinct signals.
 - `src/interaction/platform/environment.py` performs a bounded, read-only macOS foreground app/window probe; unavailable values remain unknown. Live execution requires identified app context.
 - `src/interaction/intent/fusion.py` resolves deictic utterances such as `"open this"` and `"click that"` against recent grounded gaze targets.
 - `src/interaction/feedback/fusion.py` provides event-level fusion feedback states.

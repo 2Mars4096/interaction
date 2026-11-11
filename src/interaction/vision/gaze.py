@@ -55,6 +55,9 @@ class GazeSmoother:
     def __init__(self, window_size: int = 4) -> None:
         self.window: deque[NormalizedPoint] = deque(maxlen=window_size)
 
+    def reset(self) -> None:
+        self.window.clear()
+
     def smooth(self, sample: GazeSample) -> GazeObservation:
         self.window.append(sample.point)
         x = sum(point.x for point in self.window) / len(self.window)
@@ -70,12 +73,13 @@ class GazeSmoother:
 class GazeTargetInferencer:
     """Infer the most likely large target under the current gaze point."""
 
-    def __init__(self, *, min_width: float = 0.08, min_height: float = 0.05) -> None:
+    def __init__(self, *, min_width: float = 0.08, min_height: float = 0.05, min_confidence: float = 0.6) -> None:
         self.min_width = min_width
         self.min_height = min_height
+        self.min_confidence = min_confidence
 
     def infer(self, observation: GazeObservation, targets: list[NormalizedScreenTarget]) -> GroundedTarget | None:
-        if observation.x_norm is None or observation.y_norm is None:
+        if not _valid_observation(observation, min_confidence=self.min_confidence):
             return None
         point = NormalizedPoint(observation.x_norm, observation.y_norm)
         candidates = [
@@ -93,8 +97,7 @@ class GazeTargetInferencer:
             return area_bonus - distance
 
         best = max(candidates, key=score)
-        confidence = min(1.0, observation.confidence * 0.6 + 0.4)
-        return best.to_grounded_target(confidence=confidence)
+        return best.to_grounded_target(confidence=observation.confidence)
 
 
 class DwellTrigger:
@@ -107,44 +110,88 @@ class DwellTrigger:
         min_confidence: float = 0.65,
         action: ActionName = ActionName.HIGHLIGHT_TARGET,
         cooldown_ms: int = 900,
+        rearm_ms: int = 200,
+        max_radius: float = 0.05,
     ) -> None:
         self.dwell_ms = dwell_ms
         self.min_confidence = min_confidence
         self.action = action
         self.cooldown_ms = max(0, cooldown_ms)
+        self.rearm_ms = max(0, rearm_ms)
+        if not math.isfinite(max_radius) or max_radius <= 0:
+            raise ValueError("Dwell radius must be positive and finite.")
+        self.max_radius = max_radius
         self.current_target_id: str | None = None
         self.accumulated_ms = 0
         self.triggered_target_id: str | None = None
         self.cooldown_remaining_ms = 0
+        self.lookaway_ms = 0
+        self.anchor_point: NormalizedPoint | None = None
 
     def start_cooldown(self) -> None:
+        self.reset()
         self.cooldown_remaining_ms = self.cooldown_ms
+
+    def reset(self, *, elapsed_ms: int = 0, preserve_trigger: bool = True) -> None:
+        """Clear interrupted dwell; dropped tracking never rearms a fired target."""
+        self._clear_partial()
+        self.lookaway_ms = 0
+        self.cooldown_remaining_ms = max(0, self.cooldown_remaining_ms - max(0, elapsed_ms))
+        if not preserve_trigger:
+            self.triggered_target_id = None
+            self.cooldown_remaining_ms = 0
+
+    def _clear_partial(self) -> None:
         self.current_target_id = None
         self.accumulated_ms = 0
-        self.triggered_target_id = None
+        self.anchor_point = None
 
-    def update(self, observation: GazeObservation, target: GroundedTarget | None) -> ActionProposal | None:
-        delta_ms = observation.fixation_ms or 0
-        if self.cooldown_remaining_ms > 0:
-            self.cooldown_remaining_ms = max(0, self.cooldown_remaining_ms - delta_ms)
-            self.current_target_id = None
-            self.accumulated_ms = 0
-            if self.cooldown_remaining_ms > 0:
-                return None
+    def update(
+        self, observation: GazeObservation, target: GroundedTarget | None, *, elapsed_ms: int | None = None,
+    ) -> ActionProposal | None:
+        delta_ms = max(0, observation.fixation_ms or 0)
+        elapsed_ms = delta_ms if elapsed_ms is None else max(0, elapsed_ms)
+        if not _valid_observation(observation, min_confidence=self.min_confidence) or (
+            target is not None and (not math.isfinite(target.confidence) or target.confidence < self.min_confidence)
+        ):
+            self.reset(elapsed_ms=elapsed_ms)
+            return None
+        self.cooldown_remaining_ms = max(0, self.cooldown_remaining_ms - elapsed_ms)
 
-        if target is None or target.confidence < self.min_confidence:
-            self.current_target_id = None
-            self.accumulated_ms = 0
+        # A valid point away from the fired target is deliberate evidence.
+        # Missing/weak readings use reset(), so interrupted look-away cannot
+        # accumulate across an interval in which the eyes were not tracked.
+        if self.triggered_target_id is not None:
+            if target is None or target.target_id != self.triggered_target_id:
+                self.lookaway_ms += delta_ms
+                if self.lookaway_ms >= self.rearm_ms:
+                    self.triggered_target_id = None
+                    self.lookaway_ms = 0
+                    self._clear_partial()
+                    # The look-away interval establishes deliberate rearming;
+                    # it is not also credited toward a new activation dwell.
+                    return None
+            else:
+                self.lookaway_ms = 0
+
+        if target is None or self.cooldown_remaining_ms > 0 or target.target_id == self.triggered_target_id:
+            self._clear_partial()
             return None
 
+        point = NormalizedPoint(observation.x_norm, observation.y_norm)
+
         if target.target_id == self.current_target_id:
-            self.accumulated_ms += delta_ms
+            if self.anchor_point is not None and math.dist((point.x, point.y), (self.anchor_point.x, self.anchor_point.y)) > self.max_radius:
+                self.accumulated_ms = 0
+                self.anchor_point = point
+            else:
+                self.accumulated_ms += delta_ms
         else:
             self.current_target_id = target.target_id
             self.accumulated_ms = delta_ms
-            self.triggered_target_id = None
+            self.anchor_point = point
 
-        if self.accumulated_ms >= self.dwell_ms and self.triggered_target_id != target.target_id:
+        if self.accumulated_ms >= self.dwell_ms and self.triggered_target_id is None:
             self.triggered_target_id = target.target_id
             if self.action != ActionName.DRAG_TARGET:
                 self.start_cooldown()
@@ -196,6 +243,17 @@ class DwellTrigger:
             requires_confirmation=requires_confirmation,
             rationale=rationale,
         )
+
+
+def _valid_observation(observation: GazeObservation, *, min_confidence: float) -> bool:
+    values = (observation.x_norm, observation.y_norm, observation.confidence)
+    if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in values):
+        return False
+    return (
+        0 <= observation.x_norm <= 1
+        and 0 <= observation.y_norm <= 1
+        and min_confidence <= observation.confidence <= 1
+    )
 
 
 def _region_label(point: NormalizedPoint) -> str:

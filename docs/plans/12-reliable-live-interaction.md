@@ -13,7 +13,7 @@
 - [x] [12-1-voice-session](12-1-voice-session.md): understandable commands, immediate feedback, and complete live follow-ups.
 - [x] [12-2-live-context](12-2-live-context.md): real time, bounded pending actions, actual application context, and fresh live fusion.
 - [x] [12-3-calibration-quality](12-3-calibration-quality.md): visible calibration, signed fitting, independent validation, and persisted quality.
-- [ ] 12-4: tracking-loss recovery, dwell rearming, and meaningful target-lock evidence (not yet planned).
+- [x] [12-4-tracking-recovery](12-4-tracking-recovery.md): tracking-loss recovery, dwell rearming, and meaningful target-lock evidence.
 - [ ] 12-5: reproducible dependencies, packaged native helpers, and Linux/macOS CI (not yet planned).
 
 ## Boundaries

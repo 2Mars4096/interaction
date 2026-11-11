@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from interaction.contracts import ActionName, ActionProposal, BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
 from interaction.control import CommandBroker
 from interaction.feedback import GazeFeedbackEvent, GazeLoopPhase
 from interaction.platform import MacOSPlatformAdapter, PlatformAdapter
-from interaction.vision import CalibrationProfile, CalibrationSample, DwellTrigger, GazeSample, GazeSmoother, GazeTargetInferencer, NormalizedScreenTarget
+from interaction.vision import CalibrationProfile, CalibrationSample, DwellTrigger, GazeSample, GazeSmoother, GazeTargetInferencer, NormalizedPoint, NormalizedScreenTarget
 
 
 @dataclass(frozen=True)
 class DragOrigin:
     observation: GazeObservation
     target: GroundedTarget
+    environment: EnvironmentSnapshot
 
 
 class GazeTrackingLoop:
@@ -41,6 +43,9 @@ class GazeTrackingLoop:
         self.calibration_profile = CalibrationProfile()
         self.pending_drag_origin: DragOrigin | None = None
         self.pending_drag_elapsed_ms = 0
+        self._awaiting_reacquisition = False
+        self._has_previous_gaze = False
+        self._previous_target_id: str | None = None
 
     def calibrate(self, samples: list[CalibrationSample]) -> list[GazeFeedbackEvent]:
         self.calibration_profile = CalibrationProfile.fit(samples)
@@ -64,59 +69,127 @@ class GazeTrackingLoop:
         events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
         return events
 
+    def tracking_lost(
+        self,
+        *,
+        elapsed_ms: int = 0,
+        reason: str = "Gaze tracking was lost. Look steadily at a target to resume.",
+    ) -> list[GazeFeedbackEvent]:
+        self.smoother.reset()
+        self.dwell_trigger.reset(elapsed_ms=elapsed_ms, preserve_trigger=True)
+        self._awaiting_reacquisition = True
+        self._has_previous_gaze = False
+        self._previous_target_id = None
+        cancellation = self._cancel_drag(reason)
+        return [cancellation or GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=reason)]
+
+    def _cancel_drag(self, reason: str) -> GazeFeedbackEvent | None:
+        origin = self.pending_drag_origin
+        self.pending_drag_origin = None
+        self.pending_drag_elapsed_ms = 0
+        if origin is None:
+            return None
+        return GazeFeedbackEvent(
+            phase=GazeLoopPhase.RECOVERING,
+            message=f'Drag origin at "{origin.target.label}" cancelled. {reason}',
+        )
+
     def process_sample(
         self,
         sample: GazeSample,
         targets: list[NormalizedScreenTarget],
         environment: EnvironmentSnapshot,
+        *,
+        measured_timing: bool = False,
     ) -> list[GazeFeedbackEvent]:
         events: list[GazeFeedbackEvent] = []
+        elapsed_ms = sample.delta_ms if type(sample.delta_ms) is int and sample.delta_ms >= 0 else 0
+        if self.pending_drag_origin is not None and self.pending_drag_origin.environment != environment:
+            events.extend(self.tracking_lost(
+                elapsed_ms=elapsed_ms,
+                reason="The application or window changed. Start the drag again in the intended location.",
+            ))
+            elapsed_ms = 0
+        if (
+            not isinstance(sample.point, NormalizedPoint)
+            or not all(_finite_unit_value(value) for value in (sample.point.x, sample.point.y, sample.confidence))
+            or sample.confidence < max(self.inferencer.min_confidence, self.dwell_trigger.min_confidence)
+            or type(sample.delta_ms) is not int
+            or sample.delta_ms < 0
+        ):
+            return events + self.tracking_lost(elapsed_ms=elapsed_ms, reason="Gaze tracking is weak or invalid. Look steadily at a target to resume.")
+        try:
+            calibrated_point = self.calibration_profile.project(sample.point)
+        except ValueError:
+            return events + self.tracking_lost(elapsed_ms=elapsed_ms, reason="The calibrated gaze point is invalid. Reacquire tracking before continuing.")
+        if not all(-1e-9 <= value <= 1 + 1e-9 for value in (calibrated_point.x, calibrated_point.y)):
+            return events + self.tracking_lost(elapsed_ms=elapsed_ms, reason="The calibrated gaze point is outside the screen. Look back at a target.")
+        calibrated_point = NormalizedPoint(
+            max(0.0, min(1.0, calibrated_point.x)), max(0.0, min(1.0, calibrated_point.y)),
+        )
         if self.pending_drag_origin is not None:
-            self.pending_drag_elapsed_ms += max(0, sample.delta_ms)
+            self.pending_drag_elapsed_ms += elapsed_ms
             if self.pending_drag_elapsed_ms >= self.drag_timeout_ms > 0:
-                timed_out_origin = self.pending_drag_origin
-                self.pending_drag_origin = None
-                self.pending_drag_elapsed_ms = 0
-                events.append(
-                    GazeFeedbackEvent(
-                        phase=GazeLoopPhase.RECOVERING,
-                        message=f'Drag origin at "{timed_out_origin.target.label}" timed out. Start the drag again.',
-                        observation=timed_out_origin.observation,
-                        target=timed_out_origin.target,
-                    )
-                )
-        calibrated_point = self.calibration_profile.apply(sample.point)
+                events.extend(self.tracking_lost(elapsed_ms=elapsed_ms, reason="The drag timed out. Start the drag again."))
+                elapsed_ms = 0
+        # A reacquired sample locates the eyes; elapsed missing time is never
+        # evidence that the eyes were dwelling at this newly observed point.
+        evidence_delta_ms = 0 if self._awaiting_reacquisition else elapsed_ms
+        self._awaiting_reacquisition = False
+        evidence = GazeObservation(
+            confidence=sample.confidence, x_norm=calibrated_point.x, y_norm=calibrated_point.y,
+            fixation_ms=evidence_delta_ms,
+        )
+        target = self.inferencer.infer(evidence, targets)
+        if measured_timing:
+            target_id = target.target_id if target is not None else None
+            if not self._has_previous_gaze or self._previous_target_id != target_id:
+                evidence_delta_ms = 0
+                evidence = evidence.model_copy(update={"fixation_ms": 0})
+            self._previous_target_id = target_id
+            self._has_previous_gaze = True
+        else:
+            self._has_previous_gaze = False
+            self._previous_target_id = None
+        if target is None:
+            self.smoother.reset()
+            self.dwell_trigger.update(evidence, None, elapsed_ms=elapsed_ms)
+            reason = "No large target is currently grounded. Partial dwell was cleared."
+            cancellation = self._cancel_drag(reason)
+            events.append(cancellation or GazeFeedbackEvent(
+                phase=GazeLoopPhase.RECOVERING, message=reason, observation=evidence,
+            ))
+            return events
         observation = self.smoother.smooth(
             GazeSample(
                 point=calibrated_point,
                 confidence=sample.confidence,
-                delta_ms=sample.delta_ms,
+                delta_ms=evidence_delta_ms,
             )
         )
-        target = self.inferencer.infer(observation, targets)
-        if target is None:
-            events.append(
-                GazeFeedbackEvent(
-                    phase=GazeLoopPhase.RECOVERING,
-                    message="No large target is currently grounded.",
-                    observation=observation,
-                )
-            )
-            return events
 
+        proposal = self.dwell_trigger.update(evidence, target, elapsed_ms=elapsed_ms)
+        if proposal is not None:
+            progress_message = "Dwell complete."
+        elif self.dwell_trigger.triggered_target_id == target.target_id:
+            progress_message = "Look away to rearm."
+        elif self.dwell_trigger.cooldown_remaining_ms > 0:
+            progress_message = "Waiting briefly before another action."
+        else:
+            progress = min(100, int(100 * self.dwell_trigger.accumulated_ms / max(1, self.dwell_trigger.dwell_ms)))
+            progress_message = f"Dwell {progress}%."
         events.append(
             GazeFeedbackEvent(
                 phase=GazeLoopPhase.TRACKING,
-                message=f'Grounded target "{target.label}".',
+                message=f'Grounded target "{target.label}". {progress_message}',
                 observation=observation,
                 target=target,
             )
         )
-        proposal = self.dwell_trigger.update(observation, target)
         if proposal is None:
             return events
         if proposal.action == ActionName.DRAG_TARGET:
-            return events + self._handle_drag_stage(proposal, observation, target, environment)
+            return events + self._handle_drag_stage(proposal, evidence, target, environment)
 
         decision = self.broker.decide(proposal)
         auto_confirmed = False
@@ -160,7 +233,9 @@ class GazeTrackingLoop:
         environment: EnvironmentSnapshot,
     ) -> list[GazeFeedbackEvent]:
         if self.pending_drag_origin is None:
-            self.pending_drag_origin = DragOrigin(observation=observation, target=target)
+            self.pending_drag_origin = DragOrigin(
+                observation=observation, target=target, environment=environment.model_copy(deep=True),
+            )
             self.pending_drag_elapsed_ms = 0
             return [
                 GazeFeedbackEvent(
@@ -174,7 +249,6 @@ class GazeTrackingLoop:
 
         origin = self.pending_drag_origin
         if target.target_id == origin.target.target_id:
-            self.pending_drag_elapsed_ms = 0
             return [
                 GazeFeedbackEvent(
                     phase=GazeLoopPhase.RECOVERING,
@@ -255,3 +329,7 @@ class GazeTrackingLoop:
             requires_confirmation=True,
             rationale=f'Explicit gaze drag resolved from "{origin.target.label}" to "{target.label}".',
         )
+
+
+def _finite_unit_value(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1

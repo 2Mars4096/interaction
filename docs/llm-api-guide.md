@@ -143,6 +143,13 @@ The initial typed schemas now live in `interaction.contracts`. They are intentio
 - Error limits are coarse engineering gates. A passing profile does not convert eye-detection confidence into a measured probability of accurate targeting.
 - Coordinates refer to the primary display. Multi-display semantic targeting remains outside the current contract.
 
+## Gaze Continuity and Dwell
+
+- A live lock reports sample count and actual stable duration. Its detector confidence is not a calibrated probability of accurate targeting.
+- Missing, weak, discontinuous, or displaced evidence invalidates the lock and changes its revision. Bounded capture returns only a currently supported lock, even when an earlier target had more historical hits.
+- A fired dwell target stays disarmed through cooldown and tracking loss. Sustained valid look-away is required before a complete fresh dwell can activate again.
+- Camera delays advance timeouts; they never establish a fixation. The first observation after a target transition contributes zero live fixation time.
+
 ## Remaining Decisions
 
 - Canonical grounded-target schema

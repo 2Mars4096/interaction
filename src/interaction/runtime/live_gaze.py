@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from threading import Condition, Event, Thread
 from time import monotonic
 from collections.abc import Callable
+import math
 
 from interaction.contracts import GazeObservation, GroundedTarget
-from interaction.vision import CalibrationProfile, GazeSample, GazeSmoother, GazeTargetInferencer, WebcamProviderError
+from interaction.vision import CalibrationProfile, GazeSample, GazeSmoother, GazeTargetInferencer, NormalizedPoint, WebcamProviderError
+from interaction.vision.stability import StableGazeLock
 
 from .clock import monotonic_ms
 from .webcam import default_webcam_targets
@@ -20,6 +22,8 @@ class LiveGazeSnapshot:
     target: GroundedTarget
     observed_at_ms: int
     revision: int
+    sample_count: int = 0
+    stable_duration_ms: int = 0
 
 
 class LiveGazeSampler:
@@ -31,21 +35,23 @@ class LiveGazeSampler:
 
     def __init__(self, provider, profile: CalibrationProfile, *, clock: Callable[[], int] = monotonic_ms,
                  max_age_ms: int = 1500, interval_s: float = 0.05, min_samples: int = 3,
-                 min_stable_ms: int = 120) -> None:
+                 min_stable_ms: int = 120, max_gap_ms: int = 250,
+                 max_radius: float = 0.05, min_confidence: float = 0.6) -> None:
         self.provider = provider
         self.profile = profile
         self.clock = clock
         self.max_age_ms = max_age_ms
         self.interval_s = max(0.005, interval_s)
-        self.min_samples = max(2, min_samples)
-        self.min_stable_ms = max(0, min_stable_ms)
+        self._lock = StableGazeLock(
+            min_samples=min_samples, min_stable_ms=min_stable_ms, max_gap_ms=max_gap_ms,
+            max_radius=max_radius, min_confidence=min_confidence,
+        )
         self._condition = Condition()
         self._stop = Event()
         self._thread: Thread | None = None
         self._snapshot: LiveGazeSnapshot | None = None
         self._error: WebcamProviderError | None = None
         self._close_error: WebcamProviderError | None = None
-        self._revision = 0
         self.attempted_frames = 0
         self.successful_readings = 0
         self.missing_readings = 0
@@ -75,7 +81,15 @@ class LiveGazeSampler:
         if self._error is not None:
             raise self._error
         snapshot = self._snapshot
-        if snapshot is None or not 0 <= self.clock() - snapshot.observed_at_ms <= self.max_age_ms:
+        if snapshot is None:
+            return None
+        now = self.clock()
+        if (
+            not _finite_number(now)
+            or not 0 <= now - snapshot.observed_at_ms <= min(self.max_age_ms, self._lock.max_gap_ms)
+        ):
+            self._snapshot = None
+            self._lock.reset()
             return None
         return snapshot
 
@@ -99,55 +113,47 @@ class LiveGazeSampler:
         smoother = GazeSmoother()
         inferencer = GazeTargetInferencer()
         targets = default_webcam_targets()
-        candidate_id = None
-        candidate_count = 0
-        candidate_since = self.clock()
-        previous_time = self.clock()
         try:
             self.provider.open()
             while not self._stop.is_set():
                 reading = self.provider.read(delta_ms=1)
                 now = self.clock()
-                elapsed = max(1, now - previous_time)
-                previous_time = now
                 with self._condition:
                     self.attempted_frames += 1
                     if reading is None:
                         self.missing_readings += 1
-                        if candidate_id is not None:
-                            self._revision += 1
+                        self._lock.reset()
                         self._snapshot = None
-                        candidate_id = None
-                        candidate_count = 0
-                        smoother = GazeSmoother()
+                        smoother.reset()
                     else:
                         self.successful_readings += 1
-                        observation = smoother.smooth(GazeSample(
-                            point=self.profile.apply(reading.sample.point), confidence=reading.sample.confidence, delta_ms=elapsed,
-                        ))
-                        target = inferencer.infer(observation, targets)
-                        if target is None:
-                            if candidate_id is not None:
-                                self._revision += 1
-                            self._snapshot = None
-                            candidate_id = None
-                            candidate_count = 0
-                        else:
+                        observation = self._project_observation(reading.sample)
+                        target = inferencer.infer(observation, targets) if observation is not None else None
+                        if target is not None:
                             self.grounded_readings += 1
-                            if candidate_id != target.target_id:
-                                self._revision += 1
-                                candidate_id = target.target_id
-                                candidate_count = 0
-                                candidate_since = now
-                                self._snapshot = None
-                            candidate_count += 1
-                            if candidate_count >= self.min_samples and now - candidate_since >= self.min_stable_ms:
-                                self._snapshot = LiveGazeSnapshot(observation, target, now, self._revision)
+                        previous_revision = self._lock.revision
+                        stable = self._lock.update(observation, target, observed_at_ms=now)
+                        if self._lock.revision != previous_revision or self._lock.sample_count <= 1:
+                            smoother.reset()
+                        self._snapshot = None
+                        if self._lock.sample_count:
+                            # Smoothing is presentation only: it never supplies
+                            # evidence to the lock or hides a raw target change.
+                            smoothed = smoother.smooth(GazeSample(
+                                point=NormalizedPoint(observation.x_norm, observation.y_norm),
+                                confidence=observation.confidence, delta_ms=self._lock.duration_ms,
+                            ))
+                            if stable:
+                                self._snapshot = LiveGazeSnapshot(
+                                    smoothed, target, now, self._lock.revision,
+                                    self._lock.sample_count, self._lock.duration_ms,
+                                )
                     self._condition.notify_all()
                 self._stop.wait(self.interval_s)
         except Exception as error:
             with self._condition:
                 self._error = error if isinstance(error, WebcamProviderError) else WebcamProviderError("camera_worker_failed", str(error))
+                self._lock.reset()
                 self._snapshot = None
                 self._condition.notify_all()
         finally:
@@ -157,8 +163,36 @@ class LiveGazeSampler:
                 with self._condition:
                     self._close_error = WebcamProviderError("camera_close_failed", str(error))
                     self._error = self._close_error
+                    self._lock.reset()
                     self._snapshot = None
             finally:
                 self._stop.set()
                 with self._condition:
+                    self._lock.reset()
+                    self._snapshot = None
                     self._condition.notify_all()
+
+    def _project_observation(self, sample: GazeSample) -> GazeObservation | None:
+        if (
+            not _finite_number(sample.confidence)
+            or not self._lock.min_confidence <= sample.confidence <= 1
+            or not all(_finite_number(value) and 0 <= value <= 1 for value in (sample.point.x, sample.point.y))
+        ):
+            return None
+        try:
+            point = self.profile.project(sample.point)
+        except ValueError:
+            return None
+        # Admit floating-point roundoff only; actual overshoot must not become
+        # artificial stability at a clamped screen edge.
+        if not all(_finite_number(value) and -1e-9 <= value <= 1 + 1e-9 for value in (point.x, point.y)):
+            return None
+        return GazeObservation(
+            confidence=sample.confidence,
+            x_norm=min(1.0, max(0.0, point.x)), y_norm=min(1.0, max(0.0, point.y)),
+            fixation_ms=0,
+        )
+
+
+def _finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)

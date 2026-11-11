@@ -161,6 +161,7 @@ def test_gaze_loop_drag_mode_arms_then_executes_drag() -> None:
         GazeSample(point=NormalizedPoint(0.55, 0.22), confidence=0.86, delta_ms=250),
         GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.87, delta_ms=250),
         GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.88, delta_ms=250),
+        GazeSample(point=NormalizedPoint(0.08, 0.45), confidence=0.89, delta_ms=250),
     ]
 
     events = loop.run_trace(samples, targets, EnvironmentSnapshot(active_app="Mail"))
@@ -172,7 +173,7 @@ def test_gaze_loop_drag_mode_arms_then_executes_drag() -> None:
     )
 
 
-def test_gaze_loop_drag_origin_times_out_when_destination_never_arrives() -> None:
+def test_gaze_loop_drag_origin_cancels_immediately_when_target_is_lost() -> None:
     loop = GazeTrackingLoop(
         adapter=MacOSPlatformAdapter(dry_run=True),
         dwell_trigger=DwellTrigger(dwell_ms=500, action=ActionName.DRAG_TARGET),
@@ -190,8 +191,12 @@ def test_gaze_loop_drag_origin_times_out_when_destination_never_arrives() -> Non
         GazeSample(point=NormalizedPoint(0.9, 0.9), confidence=0.88, delta_ms=350),
     ]
 
-    events = loop.run_trace(samples, targets, EnvironmentSnapshot(active_app="Mail"))
+    environment = EnvironmentSnapshot(active_app="Mail")
+    events = loop.run_trace(samples[:3], targets, environment)
 
     assert any(event.message.startswith("Drag origin armed") for event in events)
-    assert any(event.message.startswith('Drag origin at "Compose button" timed out.') for event in events)
+    assert any(event.message.startswith('Drag origin at "Compose button" cancelled.') for event in events)
+    assert loop.pending_drag_origin is None
+    assert all("timed out" not in event.message for event in events)
+    events.extend(loop.process_sample(samples[3], targets, environment))
     assert all(not (event.result and event.result.details["commands"][0][3] == "drag-normalized") for event in events)

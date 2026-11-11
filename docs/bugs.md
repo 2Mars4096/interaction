@@ -2,11 +2,13 @@
 
 ## Open Bugs
 
-- Tracking loss can retain partial dwell/armed drag state; gaze lock can be reported after one valid frame (Phase 9 section 4).
 - OpenCV 5 removes APIs used by this provider; dependency compatibility and native helper packaging need explicit gates (Phase 9 section 5).
 
 ## Resolved in Phase 9
 
+- Section 4: dropped/weak tracking and long camera gaps clear partial dwell and armed drag; cooldown or loss cannot cause repeated same-target dwell actions.
+- Section 4: live locks require consecutive unsmoothed evidence with count, duration, displacement, and gap limits. Final missing/unstable readings invalidate earlier bounded-capture locks.
+- Section 4: target inference no longer inflates detection confidence, and coordinate clamping cannot create false stable edge evidence.
 - Section 3: signed calibration fitting rejects degenerate signals; visible targets, timed complete samples, mapped dispersion, and separate validation points gate profile saving.
 - Section 3: live profiles require versioned camera/tracker-compatible validation evidence; failed calibration preserves the previous saved profile.
 - Section 3: normalized macOS pointer conversion uses global display bounds rather than backing pixels, with simulated Retina-coordinate regression coverage.

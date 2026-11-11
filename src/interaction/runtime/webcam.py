@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
 from collections.abc import Callable
 import math
+import time
 from typing import Any
 
-from interaction.contracts import ActionName, ActionProposal, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
+from interaction.contracts import ActionName, ActionProposal, BrokerDecisionType, EnvironmentSnapshot, GazeObservation, GroundedTarget, RiskLevel
 from interaction.control import CommandBroker
 from interaction.feedback import GazeFeedbackEvent, GazeLoopPhase
 from interaction.platform import PlatformAdapter
@@ -24,6 +24,9 @@ from interaction.vision import (
 )
 
 from .gaze import GazeTrackingLoop
+from .clock import Clock, monotonic_ms
+from .sampling import timed_readings
+from interaction.vision.stability import StableGazeLock
 
 
 class WebcamCalibrationError(RuntimeError):
@@ -52,6 +55,8 @@ class LiveGazeContext:
     missing_readings: int
     grounded_readings: int
     dominant_target_hits: int
+    observed_at_ms: int = 0
+    stable_duration_ms: int = 0
 
 
 @dataclass
@@ -247,29 +252,49 @@ def run_live_webcam_trace(
     targets: list[NormalizedScreenTarget] | None = None,
     environment: EnvironmentSnapshot | None = None,
     point_visualizer: Any | None = None,
+    clock: Clock = monotonic_ms,
+    sleep: Callable[[float], None] = time.sleep,
+    max_gap_ms: int = 250,
+    event_sink: list[GazeFeedbackEvent] | None = None,
 ) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
     if targets is None:
         targets = default_webcam_targets()
     if environment is None:
-        environment = EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera")
-    events: list[GazeFeedbackEvent] = []
+        environment = EnvironmentSnapshot()
+    events = event_sink if event_sink is not None else []
     successful_readings = 0
     missing_readings = 0
     triggered_events = 0
-    for _ in range(frames):
-        reading = provider.read(delta_ms=delta_ms)
-        if reading is None:
-            missing_readings += 1
-            _hide_point_visualizer(point_visualizer)
-            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
-            continue
-        successful_readings += 1
-        if point_visualizer is not None:
-            calibrated_point = loop.calibration_profile.apply(reading.sample.point)
-            _show_point_visualizer(point_visualizer, calibrated_point.x, calibrated_point.y)
-        sample_events = loop.process_sample(reading.sample, targets, environment)
-        triggered_events += sum(1 for event in sample_events if event.phase == GazeLoopPhase.TRIGGERED)
-        events.extend(sample_events)
+    try:
+        for timed in timed_readings(provider, frames=frames, interval_ms=delta_ms, clock=clock, sleep=sleep):
+            reading = timed.reading
+            if reading is None:
+                missing_readings += 1
+                _hide_point_visualizer(point_visualizer)
+                events.extend(loop.tracking_lost(elapsed_ms=timed.elapsed_ms))
+                continue
+            successful_readings += 1
+            elapsed = timed.elapsed_ms
+            if not timed.clock_continuous or elapsed > max_gap_ms:
+                events.extend(loop.tracking_lost(elapsed_ms=elapsed, reason="Camera sampling paused; reacquiring gaze."))
+                elapsed = 0
+            sample_events = loop.process_sample(
+                GazeSample(reading.sample.point, confidence=reading.sample.confidence, delta_ms=elapsed), targets, environment,
+                measured_timing=True,
+            )
+            current = next((event.observation for event in reversed(sample_events)
+                            if event.observation is not None and event.phase in {GazeLoopPhase.TRACKING, GazeLoopPhase.TRIGGERED}), None)
+            if current is not None:
+                _show_point_visualizer(point_visualizer, current.x_norm, current.y_norm)
+            else:
+                _hide_point_visualizer(point_visualizer)
+            triggered_events += sum(1 for event in sample_events if event.phase == GazeLoopPhase.TRIGGERED)
+            events.extend(sample_events)
+    finally:
+        had_drag = loop.pending_drag_origin is not None
+        cancelled = loop.tracking_lost(reason="The live gaze session ended; start a new action to continue.")
+        if had_drag:
+            events.extend(cancelled)
     events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
     return events, {
         "attempted_frames": frames,
@@ -296,111 +321,85 @@ def run_live_cursor_follow(
     smoother: GazeSmoother | None = None,
     targets: list[NormalizedScreenTarget] | None = None,
     point_visualizer: Any | None = None,
+    clock: Clock = monotonic_ms,
+    sleep: Callable[[float], None] = time.sleep,
+    max_gap_ms: int = 250,
+    event_sink: list[GazeFeedbackEvent] | None = None,
 ) -> tuple[list[GazeFeedbackEvent], dict[str, int]]:
-    if environment is None:
-        environment = EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera")
-    if targets is None:
-        targets = default_webcam_targets()
+    environment = environment or EnvironmentSnapshot()
+    targets = default_webcam_targets() if targets is None else targets
     inferencer = inferencer or GazeTargetInferencer()
     smoother = smoother or GazeSmoother()
+    lock = StableGazeLock(min_confidence=min_confidence, max_gap_ms=max_gap_ms)
     broker = CommandBroker()
-    cursor = CursorFollowController(
-        smoothing=smoothing,
-        deadzone=min_move_distance,
-        edge_padding=edge_padding,
-        max_step=max_step,
-    )
+    cursor = CursorFollowController(smoothing=smoothing, deadzone=min_move_distance, edge_padding=edge_padding, max_step=max_step)
+    events = event_sink if event_sink is not None else []
+    successful_readings = missing_readings = moved_events = low_confidence_readings = held_events = acquiring_readings = 0
 
-    events: list[GazeFeedbackEvent] = []
-    successful_readings = 0
-    missing_readings = 0
-    moved_events = 0
-    low_confidence_readings = 0
-    held_events = 0
-
-    for _ in range(frames):
-        reading = provider.read(delta_ms=delta_ms)
+    for timed in timed_readings(provider, frames=frames, interval_ms=delta_ms, clock=clock, sleep=sleep):
+        reading = timed.reading
+        if not timed.clock_continuous or timed.elapsed_ms > max_gap_ms:
+            lock.reset()
+            smoother.reset()
         if reading is None:
             missing_readings += 1
+            lock.reset()
+            smoother.reset()
             _hide_point_visualizer(point_visualizer)
-            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No coarse gaze reading from webcam provider."))
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="Gaze tracking was lost; cursor movement is paused."))
             continue
-
         successful_readings += 1
-        calibrated_point = profile.apply(reading.sample.point)
-        observation = smoother.smooth(
-            GazeSample(
-                point=calibrated_point,
-                confidence=reading.sample.confidence,
-                delta_ms=reading.sample.delta_ms,
-            )
-        )
-        if point_visualizer is not None and observation.x_norm is not None and observation.y_norm is not None:
-            _show_point_visualizer(point_visualizer, observation.x_norm, observation.y_norm)
-        target = inferencer.infer(observation, targets)
-        if observation.confidence < min_confidence or observation.x_norm is None or observation.y_norm is None:
+        evidence = _live_observation(profile, reading, elapsed_ms=timed.elapsed_ms, min_confidence=min_confidence)
+        if evidence is None:
             low_confidence_readings += 1
-            events.append(
-                GazeFeedbackEvent(
-                    phase=GazeLoopPhase.RECOVERING,
-                    message="Live gaze confidence is too low for cursor follow.",
-                    observation=observation,
-                    target=target,
-                )
-            )
+            lock.reset()
+            smoother.reset()
+            _hide_point_visualizer(point_visualizer)
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No valid gaze evidence for cursor follow."))
             continue
-
+        target = inferencer.infer(evidence, targets)
+        previous_revision = lock.revision
+        stable = lock.update(evidence, target, observed_at_ms=timed.observed_at_ms)
+        if lock.revision != previous_revision:
+            smoother.reset()
+        observation = smoother.smooth(GazeSample(
+            NormalizedPoint(evidence.x_norm, evidence.y_norm), confidence=evidence.confidence, delta_ms=timed.elapsed_ms,
+        ))
+        _show_point_visualizer(point_visualizer, observation.x_norm, observation.y_norm)
+        if not stable:
+            acquiring_readings += 1
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.TRACKING, message="Acquiring stable gaze before moving the cursor.", observation=observation, target=target))
+            continue
         point = cursor.next_point(observation)
         if point is None:
             held_events += 1
-            events.append(
-                GazeFeedbackEvent(
-                    phase=GazeLoopPhase.TRACKING,
-                    message="Live gaze cursor hold is within the movement threshold.",
-                    observation=observation,
-                    target=target,
-                )
-            )
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.TRACKING, message="Live gaze cursor hold is within the movement threshold.", observation=observation, target=target))
             continue
-
         proposal = ActionProposal(
             action=ActionName.FOCUS_TARGET,
             arguments={
                 "normalized_point": {"x": point[0], "y": point[1]},
-                **({"target_ref": target.target_id, "target_label": target.label} if target is not None else {}),
-                **({"target_bounds": target.bounds.model_dump(mode="json")} if target is not None and target.bounds is not None else {}),
+                "target_ref": target.target_id, "target_label": target.label,
+                **({"target_bounds": target.bounds.model_dump(mode="json")} if target.bounds is not None else {}),
             },
-            confidence=observation.confidence,
-            risk=RiskLevel.L1,
-            requires_confirmation=False,
-            rationale="Live gaze cursor-follow mode moved the pointer to the current normalized gaze point.",
+            confidence=observation.confidence, risk=RiskLevel.L1, requires_confirmation=False,
+            rationale="Stable current gaze evidence moved the pointer to the normalized point.",
         )
         decision = broker.decide(proposal)
-        request = broker.build_execution_request(decision, environment)
-        result = adapter.execute(request)
+        if decision.decision != BrokerDecisionType.ALLOW:
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=decision.reason, proposal=proposal, target=target))
+            continue
+        result = adapter.execute(broker.build_execution_request(decision, environment))
         moved_events += 1
-        message = 'Moved cursor with live gaze follow.'
-        if target is not None:
-            message = f'Moved cursor with live gaze follow toward "{target.label}".'
-        events.append(
-            GazeFeedbackEvent(
-                phase=GazeLoopPhase.TRACKING,
-                message=message,
-                observation=observation,
-                target=target,
-                proposal=proposal,
-                result=result,
-            )
-        )
-
+        events.append(GazeFeedbackEvent(
+            phase=GazeLoopPhase.TRACKING, message=f'Moved cursor with live gaze follow toward "{target.label}".',
+            observation=observation, target=target, proposal=proposal, result=result,
+        ))
     events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."))
     return events, {
-        "attempted_frames": frames,
-        "successful_readings": successful_readings,
-        "missing_readings": missing_readings,
-        "moved_events": moved_events,
-        "held_events": held_events,
-        "low_confidence_readings": low_confidence_readings,
+        "attempted_frames": max(0, frames), "successful_readings": successful_readings,
+        "missing_readings": missing_readings, "moved_events": moved_events, "held_events": held_events,
+        "low_confidence_readings": low_confidence_readings, "acquiring_readings": acquiring_readings,
     }
 
 
@@ -413,90 +412,80 @@ def capture_live_gaze_context(
     targets: list[NormalizedScreenTarget] | None = None,
     inferencer: GazeTargetInferencer | None = None,
     smoother: GazeSmoother | None = None,
+    clock: Clock = monotonic_ms,
+    sleep: Callable[[float], None] = time.sleep,
+    max_gap_ms: int = 250,
 ) -> tuple[LiveGazeContext | None, list[GazeFeedbackEvent], dict[str, int]]:
-    if targets is None:
-        targets = default_webcam_targets()
+    targets = default_webcam_targets() if targets is None else targets
     inferencer = inferencer or GazeTargetInferencer()
     smoother = smoother or GazeSmoother()
-
-    events: list[GazeFeedbackEvent] = []
-    successful_readings = 0
-    missing_readings = 0
-    grounded_readings = 0
-    hits: Counter[str] = Counter()
-    latest_match: dict[str, tuple[GazeObservation, GroundedTarget, int]] = {}
-
-    for index in range(frames):
-        reading = provider.read(delta_ms=delta_ms)
+    lock = StableGazeLock(max_gap_ms=max_gap_ms)
+    events = []
+    successful_readings = missing_readings = grounded_readings = 0
+    latest = None
+    for timed in timed_readings(provider, frames=frames, interval_ms=delta_ms, clock=clock, sleep=sleep):
+        if not timed.clock_continuous or timed.elapsed_ms > max_gap_ms:
+            lock.reset()
+            smoother.reset()
+        reading = timed.reading
         if reading is None:
             missing_readings += 1
-            events.append(
-                GazeFeedbackEvent(
-                    phase=GazeLoopPhase.RECOVERING,
-                    message="No coarse gaze reading from webcam provider.",
-                )
-            )
+            evidence = None
+        else:
+            successful_readings += 1
+            evidence = _live_observation(profile, reading, elapsed_ms=timed.elapsed_ms)
+        if evidence is None:
+            lock.reset()
+            smoother.reset()
+            latest = None
+            events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message="No current valid gaze evidence."))
             continue
-
-        successful_readings += 1
-        calibrated_point = profile.apply(reading.sample.point)
-        observation = smoother.smooth(
-            GazeSample(
-                point=calibrated_point,
-                confidence=reading.sample.confidence,
-                delta_ms=reading.sample.delta_ms,
-            )
-        )
-        target = inferencer.infer(observation, targets)
-        if target is None:
-            events.append(
-                GazeFeedbackEvent(
-                    phase=GazeLoopPhase.RECOVERING,
-                    message="No grounded live gaze target is stable enough yet.",
-                    observation=observation,
-                )
-            )
-            continue
-
-        grounded_readings += 1
-        hits[target.target_id] += 1
-        latest_match[target.target_id] = (observation, target, index)
-        events.append(
-            GazeFeedbackEvent(
-                phase=GazeLoopPhase.TRACKING,
-                message=f'Grounded live gaze target "{target.label}".',
-                observation=observation,
-                target=target,
-            )
-        )
-
+        target = inferencer.infer(evidence, targets)
+        grounded_readings += int(target is not None)
+        previous_revision = lock.revision
+        stable = lock.update(evidence, target, observed_at_ms=timed.observed_at_ms)
+        if lock.revision != previous_revision:
+            smoother.reset()
+        observation = smoother.smooth(GazeSample(
+            NormalizedPoint(evidence.x_norm, evidence.y_norm), confidence=evidence.confidence, delta_ms=timed.elapsed_ms,
+        ))
+        latest = (observation, target, timed.observed_at_ms) if stable else None
+        events.append(GazeFeedbackEvent(
+            phase=GazeLoopPhase.TRACKING,
+            message="Stable live gaze target acquired." if stable else "Acquiring stable gaze evidence.",
+            observation=observation, target=target,
+        ))
     summary = {
-        "attempted_frames": frames,
-        "successful_readings": successful_readings,
-        "missing_readings": missing_readings,
-        "grounded_readings": grounded_readings,
+        "attempted_frames": max(0, frames), "successful_readings": successful_readings,
+        "missing_readings": missing_readings, "grounded_readings": grounded_readings,
     }
-    if not hits:
+    if latest is None or not 0 <= clock() - latest[2] <= max_gap_ms:
         return None, events, summary
-
-    dominant_target_id = max(
-        hits,
-        key=lambda target_id: (hits[target_id], latest_match[target_id][2]),
-    )
-    observation, target, _ = latest_match[dominant_target_id]
+    observation, target, observed_at = latest
     context = LiveGazeContext(
-        observation=observation,
-        target=target,
-        attempted_frames=frames,
-        successful_readings=successful_readings,
-        missing_readings=missing_readings,
-        grounded_readings=grounded_readings,
-        dominant_target_hits=hits[dominant_target_id],
+        observation=observation, target=target, attempted_frames=max(0, frames),
+        successful_readings=successful_readings, missing_readings=missing_readings,
+        grounded_readings=grounded_readings, dominant_target_hits=lock.sample_count,
+        observed_at_ms=observed_at, stable_duration_ms=lock.duration_ms,
     )
-    return context, events, {
-        **summary,
-        "dominant_target_hits": context.dominant_target_hits,
-    }
+    return context, events, {**summary, "dominant_target_hits": context.dominant_target_hits, "stable_duration_ms": lock.duration_ms}
+
+
+def _live_observation(profile, reading, *, elapsed_ms: int, min_confidence: float = 0.6) -> GazeObservation | None:
+    sample = reading.sample
+    try:
+        values = (sample.point.x, sample.point.y, sample.confidence)
+        if not all(math.isfinite(value) and 0 <= value <= 1 for value in values) or sample.confidence < min_confidence:
+            return None
+        point = profile.project(sample.point)
+        if not all(-1e-9 <= value <= 1 + 1e-9 for value in (point.x, point.y)):
+            return None
+        return GazeObservation(
+            confidence=sample.confidence, x_norm=min(1.0, max(0.0, point.x)), y_norm=min(1.0, max(0.0, point.y)),
+            fixation_ms=max(0, elapsed_ms),
+        )
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def _clamp_with_padding(value: float, padding: float) -> float:

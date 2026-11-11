@@ -240,13 +240,13 @@ def test_run_live_cursor_follow_updates_point_visualizer() -> None:
         provider,
         CalibrationProfile(),
         adapter=MacOSPlatformAdapter(dry_run=True),
-        frames=2,
+        frames=3,
         delta_ms=100,
         point_visualizer=visualizer,
     )
 
-    assert summary["successful_readings"] == 2
-    assert len(visualizer.points) == 2
+    assert summary["successful_readings"] == 3
+    assert len(visualizer.points) == 3
     assert all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in visualizer.points)
     assert any(event.result for event in events)
 

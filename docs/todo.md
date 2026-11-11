@@ -70,7 +70,7 @@
   - [x] [12-1-voice-session](plans/12-1-voice-session.md) — commands, feedback, and live follow-ups
   - [x] [12-2-live-context](plans/12-2-live-context.md) — timing, pending actions, and live context
   - [x] [12-3-calibration-quality](plans/12-3-calibration-quality.md) — calibration validity and visible targets
-  - [ ] 12-4: Tracking loss and deliberate dwell (not yet planned)
+  - [x] [12-4-tracking-recovery](plans/12-4-tracking-recovery.md) — tracking loss and deliberate dwell
   - [ ] 12-5: Dependencies, packaging, and CI (not yet planned)
 
 ## Backlog (unphased)

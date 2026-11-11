@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-11 — Section 4
+- [fix] Cleared smoothing, partial dwell, and armed drag on lost/weak tracking or long camera gaps; preserved a fired target's disarmed state until deliberate look-away.
+- [fix] Separated actual elapsed time from observed fixation duration so target transitions cannot count as a completed look-away or a new dwell.
+- [feat] Shared stable gaze gates across live fusion, cursor follow, and bounded context capture, with count/duration evidence and immediate gaze feedback.
+- [fix] Removed inferred-target confidence inflation and rejected invalid/unclamped out-of-screen readings before stability checks.
+- [test] Added loss/reacquisition, same-target repeat, stale final lock, long-gap, raw-jitter, and real-clock regressions.
+
 ## 2026-11-11 — Section 3
 - [fix] Replaced unsigned calibration spans with signed least-squares fitting and explicit rejection of degenerate input.
 - [feat] Added visible cancellable reference targets, complete timed sampling, independent validation points, and mapped jitter/error evidence before saving a live profile.

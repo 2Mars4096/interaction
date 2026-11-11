@@ -479,6 +479,9 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
         drag_timeout_ms=max(0, args.drag_timeout_ms),
     )
     loop.calibration_profile = profile
+    live_events = LiveEventBuffer("gaze", logger, overlay)
+    live_events.append(GazeFeedbackEvent(phase=GazeLoopPhase.TRACKING, message="Starting live gaze. Tracking loss pauses control."))
+    environment = capture_environment()
     try:
         provider.open()
         if gaze_mode == "cursor":
@@ -488,13 +491,14 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 adapter=loop.adapter,
                 frames=args.frames,
                 delta_ms=args.delta_ms,
-                environment=EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera"),
+                environment=environment,
                 targets=default_webcam_targets(),
                 min_move_distance=max(0.0, args.cursor_deadzone),
                 smoothing=max(0.0, min(1.0, args.cursor_smoothing)),
                 edge_padding=max(0.0, min(0.45, args.cursor_edge_padding)),
                 max_step=max(0.01, min(1.0, args.cursor_max_step)),
                 point_visualizer=point_visualizer,
+                event_sink=live_events,
             )
         else:
             events, summary = run_live_webcam_trace(
@@ -503,25 +507,36 @@ def _run_gaze_live(args: argparse.Namespace, store: JsonStateStore) -> dict[str,
                 frames=args.frames,
                 delta_ms=args.delta_ms,
                 targets=default_webcam_targets(),
-                environment=EnvironmentSnapshot(active_app="Webcam Live", active_window_title="Live Camera"),
+                environment=environment,
                 point_visualizer=point_visualizer,
+                event_sink=live_events,
             )
         live_gaze = {"status": "success", **summary}
     except WebcamProviderError as error:
-        events = [
+        events = live_events
+        events.extend([
             GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=error.message),
             GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze loop is idle."),
-        ]
+        ])
         live_gaze = {
             "status": "error",
             "error": error.code,
             "message": error.message,
             "payload": error.payload,
         }
+    except KeyboardInterrupt:
+        events = live_events
+        events.append(GazeFeedbackEvent(phase=GazeLoopPhase.IDLE, message="Gaze session stopped."))
+        live_gaze = {"status": "cancelled"}
     finally:
-        provider.close()
-        if point_visualizer is not None:
-            point_visualizer.close()
+        for resource in (provider, point_visualizer):
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception as error:
+                    events = live_events
+                    events.append(GazeFeedbackEvent(phase=GazeLoopPhase.RECOVERING, message=f"Gaze cleanup failed: {error}"))
+                    live_gaze = {"status": "error", "error": "gaze_cleanup_failed", "message": str(error)}
     return _build_payload(
         source="gaze",
         events=events,
@@ -614,6 +629,8 @@ def _run_fusion_live(args: argparse.Namespace, store: JsonStateStore) -> dict[st
         live_gaze_context.update({
             "status": "success", "target": snapshot.target.model_dump(mode="json"),
             "observation": snapshot.observation.model_dump(mode="json"), "observed_at_ms": snapshot.observed_at_ms,
+            "lock_evidence": {"sample_count": snapshot.sample_count, "stable_duration_ms": snapshot.stable_duration_ms,
+                              "confidence_kind": "detector_heuristic"},
         })
 
     def capture_command(provider, *, confirmation=False):
